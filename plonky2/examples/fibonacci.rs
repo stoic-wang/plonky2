@@ -4,11 +4,20 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
+#[cfg(feature = "cuda")]
+use plonky2::util::cuda::init_cuda;
 
 /// An example of using Plonky2 to prove a statement of the form
 /// "I know the 100th element of the Fibonacci sequence, starting with constants a and b."
 /// When a == 0 and b == 1, this is proving knowledge of the 100th (standard) Fibonacci number.
 fn main() -> Result<()> {
+    #[cfg(feature = "cuda")]
+    init_cuda();
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
+    const N: usize = 1000000;
+
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
@@ -21,7 +30,7 @@ fn main() -> Result<()> {
     let initial_b = builder.add_virtual_target();
     let mut prev_target = initial_a;
     let mut cur_target = initial_b;
-    for _ in 0..99 {
+    for _ in 0..=N {
         let temp = builder.add(prev_target, cur_target);
         prev_target = cur_target;
         cur_target = temp;
@@ -37,12 +46,13 @@ fn main() -> Result<()> {
     pw.set_target(initial_a, F::ZERO);
     pw.set_target(initial_b, F::ONE);
 
+    builder.print_gate_counts(0);
     let data = builder.build::<C>();
     let proof = data.prove(pw)?;
 
     println!(
-        "100th Fibonacci number mod |F| (starting with {}, {}) is: {}",
-        proof.public_inputs[0], proof.public_inputs[1], proof.public_inputs[2]
+        "{}th Fibonacci number mod |F| (starting with {}, {}) is: {}",
+        N, proof.public_inputs[0], proof.public_inputs[1], proof.public_inputs[2]
     );
 
     data.verify(proof)

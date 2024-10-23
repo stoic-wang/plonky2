@@ -17,6 +17,9 @@ pub mod serialization;
 pub mod strided_view;
 pub mod timing;
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
+
 #[cfg(feature = "papi")]
 pub(crate) mod papi;
 

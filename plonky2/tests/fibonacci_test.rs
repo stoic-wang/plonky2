@@ -3,12 +3,8 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-
 #[cfg(feature = "cuda")]
-use crate::test_utils::init_cuda;
-#[cfg(feature = "cuda")]
-pub mod test_utils;
-
+use plonky2::util::cuda::init_cuda;
 #[test]
 fn test_fibonacci_proof() {
     #[cfg(feature = "cuda")]
@@ -24,7 +20,7 @@ fn test_fibonacci_proof() {
     // The arithmetic circuit.
     let initial = builder.add_virtual_target();
     let mut cur_target = initial;
-    for i in 2..101 {
+    for i in 2..1000001 {
         let i_target = builder.constant(F::from_canonical_u32(i));
         cur_target = builder.mul(cur_target, i_target);
     }
@@ -36,13 +32,18 @@ fn test_fibonacci_proof() {
     let mut pw = PartialWitness::new();
     pw.set_target(initial, F::ONE);
 
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+    builder.print_gate_counts(0);
     let data = builder.build::<C>();
     let proof = data.prove(pw).unwrap();
 
-    println!(
-        "Factorial starting at {} is {}",
-        proof.public_inputs[0], proof.public_inputs[1]
-    );
+    // println!(
+    //     "Factorial starting at {} is {}",
+    //     proof.public_inputs[0], proof.public_inputs[1]
+    // );
 
     let _ = data.verify(proof);
 }

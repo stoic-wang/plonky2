@@ -5,16 +5,19 @@ pub fn init_cuda() {
     use plonky2_field::types::{Field, PrimeField64};
 
     let num_of_gpus = get_number_of_gpus_rs();
-    println!("num of gpus: {:?}", num_of_gpus);
-    std::env::set_var("NUM_OF_GPUS", num_of_gpus.to_string());
+    // println!("num of gpus: {:?}", num_of_gpus);
+    // std::env::set_var("NUM_OF_GPUS", num_of_gpus.to_string());
 
-    let log_ns: Vec<usize> = (2..22).collect();
+    // Use single GPU
+    std::env::set_var("NUM_OF_GPUS", "1");
+
+    let log_ns: Vec<usize> = (2..26).collect();
 
     let mut device_id = 0;
     while device_id < num_of_gpus {
         init_coset_rs(
             device_id,
-            24,
+            26,
             GoldilocksField::coset_shift().to_canonical_u64(),
         );
         for log_n in &log_ns {
