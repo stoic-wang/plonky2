@@ -131,7 +131,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
     ) -> Self {
         let degree = values[0].len();
         let log_n = log2_strict(degree);
-        
+
         if log_n + rate_bits > 1 && values.len() > 0 {
             let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
                 .expect("NUM_OF_GPUS should be set")
@@ -148,7 +148,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 log_n,
                 degree,
             )
-
         } else {
             Self::from_values_cpu(
                 values,
@@ -326,7 +325,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let pols = polynomials.len();
         let degree = polynomials[0].len();
         let log_n = log2_strict(degree);
-        
+
         if log_n + rate_bits > 1 && polynomials.len() > 0 {
             let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
                 .expect("NUM_OF_GPUS should be set")
@@ -483,7 +482,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         // If blinding, salt with two random elements to each leaf vector.
         let salt_size = if blinding { SALT_SIZE } else { 0 };
         // println!("salt_size: {:?}", salt_size);
-    
+
         let ret = polynomials
             .par_iter()
             .map(|p| {
