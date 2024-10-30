@@ -152,6 +152,7 @@ impl<F: Field> PolynomialCoeffs<F> {
             .collect()
     }
 
+    ///WIP: We can try a tree based estriens method for this. Maybe will speed it up?
     pub fn eval(&self, x: F) -> F {
         self.coeffs
             .iter()
