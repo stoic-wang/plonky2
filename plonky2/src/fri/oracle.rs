@@ -138,7 +138,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 .parse()
                 .unwrap();
 
-            Self::from_values_gpu(
+            let mt = Self::from_values_gpu(
                 values.as_slice(),
                 rate_bits,
                 blinding,
@@ -147,7 +147,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 fft_root_table,
                 log_n,
                 degree,
-            )
+            );
+
+            Self {
+                polynomials,
+                merkle_tree,
+                degree_log: log2_strict(degree),
+                rate_bits,
+                blinding,
+            }
         } else {
             Self::from_values_cpu(
                 values,
@@ -169,7 +177,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         _fft_root_table: Option<&FftRootTable<F>>,
         log_n: usize,
-        _degree: usize,
+        degree: usize,
     ) -> Self {
         let output_domain_size = log_n + rate_bits;
 
@@ -227,6 +235,18 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             );
         }
 
+        let mut coeffs_1d = vec![F::ZERO; total_num_output_elements];
+        device_output_data
+                .copy_to_host(coeffs_1d.as_mut_slice(), total_num_output_elements)
+                .expect("copy to host error");
+
+        let chunk_size = (1 << output_domain_size);
+        let coeffs_batch: Vec<PolynomialCoeffs<F>> =  coeffs_1d.chunks(chunk_size)
+            .map(|chunk| {
+                PolynomialCoeffs{coeffs: chunk}
+            })
+            .collect();
+
         let mut cfg_trans = TransposeConfig::default();
         cfg_trans.batches = total_num_of_fft as u32;
         cfg_trans.are_inputs_on_device = true;
@@ -257,7 +277,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 cap_height
             )
         );
-        mt
+        Self{
+            polynomials: coeffs_batch,
+            merkle_tree: mt,
+            degree_log:  log2_strict(degree),
+            rate_bits,
+            blinding,
+        }
     }
 
     /// Creates a list polynomial commitment for the polynomials `polynomials`.
