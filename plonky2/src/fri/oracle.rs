@@ -3,7 +3,7 @@ use alloc::{format, vec::Vec};
 
 #[cfg(feature = "cuda")]
 use cryptography_cuda::{
-    device::memory::HostOrDeviceSlice, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
+    device::memory::HostOrDeviceSlice, intt_batch, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
     types::*,
 };
 use itertools::Itertools;
@@ -138,7 +138,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 .parse()
                 .unwrap();
 
-            let mt = Self::from_values_gpu(
+            Self::from_values_gpu(
                 values.as_slice(),
                 rate_bits,
                 blinding,
@@ -147,15 +147,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 fft_root_table,
                 log_n,
                 degree,
-            );
-
-            Self {
-                polynomials,
-                merkle_tree,
-                degree_log: log2_strict(degree),
-                rate_bits,
-                blinding,
-            }
+            )
         } else {
             Self::from_values_cpu(
                 values,
@@ -172,7 +164,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
     pub fn from_values_gpu(
         values: &[PolynomialValues<F>],
         rate_bits: usize,
-        _blinding: bool,
+        blinding: bool,
         cap_height: usize,
         timing: &mut TimingTree,
         _fft_root_table: Option<&FftRootTable<F>>,
@@ -185,8 +177,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             .expect("NUM_OF_GPUS should be set")
             .parse()
             .unwrap();
-        // let num_gpus: usize = 1;
-        // println!("get num of gpus: {:?}", num_gpus);
+
         let total_num_of_fft = values.len();
         // println!("total_num_of_fft: {:?}", total_num_of_fft);
 
@@ -198,10 +189,24 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             .flat_map(|v| v.values.iter().cloned())
             .collect();
 
+        let mut device_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0, total_num_input_elements).unwrap();
+
+        let _ret = device_data.copy_from_host(&gpu_input);
+
+        let mut cfg_ntt = NTTConfig::default();
+
+        intt_batch(
+            0,
+            device_data.as_mut_ptr(),
+            log_n,
+            cfg_ntt.clone(),
+        );
+
         let mut cfg_lde = NTTConfig::default();
         cfg_lde.batches = total_num_of_fft as u32;
         cfg_lde.extension_rate_bits = rate_bits as u32;
-        cfg_lde.are_inputs_on_device = false;
+        cfg_lde.are_inputs_on_device = true;
         cfg_lde.are_outputs_on_device = true;
         cfg_lde.with_coset = true;
         cfg_lde.is_multi_gpu = true;
@@ -216,7 +221,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 lde_batch(
                     0,
                     device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
                     log_n,
                     cfg_lde.clone()
                 )
@@ -227,7 +232,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 "LDE on multi GPU",
                 lde_batch_multi_gpu::<F>(
                     device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
                     num_gpus,
                     cfg_lde.clone(),
                     log_n,
@@ -235,15 +240,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             );
         }
 
-        let mut coeffs_1d = vec![F::ZERO; total_num_output_elements];
-        device_output_data
-                .copy_to_host(coeffs_1d.as_mut_slice(), total_num_output_elements)
-                .expect("copy to host error");
+        let mut coeffs_1d = vec![F::ZERO; total_num_input_elements];
+        device_data
+            .copy_to_host(coeffs_1d.as_mut_slice(), total_num_input_elements)
+            .unwrap();
 
-        let chunk_size = (1 << output_domain_size);
+        let chunk_size = 1 << log_n;
         let coeffs_batch: Vec<PolynomialCoeffs<F>> =  coeffs_1d.chunks(chunk_size)
             .map(|chunk| {
-                PolynomialCoeffs{coeffs: chunk}
+                PolynomialCoeffs{coeffs: chunk.to_vec()}
             })
             .collect();
 
