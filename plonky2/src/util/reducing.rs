@@ -340,6 +340,7 @@ mod tests {
         builder.connect_extension(manual_reduce, circuit_reduce);
 
         let data = builder.build::<C>();
+        println!("STARTINGPROOF");
         let proof = data.prove(pw)?;
 
         verify(proof, &data.verifier_only, &data.common)
