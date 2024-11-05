@@ -128,6 +128,9 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_verify_rust() {
         let mut rng = thread_rng();
@@ -140,6 +143,8 @@ mod tests {
 
     #[test]
     fn test_verify_circuit() {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         // keygen and sign
         let mut rng = thread_rng();
         let (pk, sk) = schnorr_keygen(&mut rng);

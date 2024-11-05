@@ -183,8 +183,13 @@ mod tests {
     use super::*;
     use crate::curve::secp256k1::Secp256K1;
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_random_access_curve_points() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -220,6 +225,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_curve_windowed_mul() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

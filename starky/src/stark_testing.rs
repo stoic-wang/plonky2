@@ -12,6 +12,8 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::GenericConfig;
+#[cfg(feature = "cuda")]
+use plonky2::util::test_utils::init_cuda;
 use plonky2::util::{log2_ceil, log2_strict, transpose};
 
 use crate::constraint_consumer::{ConstraintConsumer, RecursiveConstraintConsumer};
@@ -25,6 +27,8 @@ const WITNESS_SIZE: usize = 1 << 5;
 pub fn test_stark_low_degree<F: RichField + Extendable<D>, S: Stark<F, D>, const D: usize>(
     stark: S,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    init_cuda();
     let rate_bits = log2_ceil(stark.constraint_degree() + 1);
 
     let trace_ldes = random_low_degree_matrix::<F>(S::COLUMNS, rate_bits);
@@ -81,6 +85,8 @@ pub fn test_stark_circuit_constraints<
 >(
     stark: S,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    init_cuda();
     // Compute native constraint evaluation on random values.
     let vars = S::EvaluationFrame::from_values(
         &F::Extension::rand_vec(S::COLUMNS),

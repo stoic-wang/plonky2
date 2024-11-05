@@ -747,8 +747,13 @@ mod tests {
 
     use crate::gadgets::nonnative::{CircuitBuilderNonNative, PartialWitnessNonNative};
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_nonnative_add() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -776,6 +781,8 @@ mod tests {
 
     #[test]
     fn test_nonnative_many_adds() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -816,6 +823,8 @@ mod tests {
 
     #[test]
     fn test_nonnative_sub() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -846,6 +855,8 @@ mod tests {
 
     #[test]
     fn test_nonnative_mul() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -872,6 +883,8 @@ mod tests {
 
     #[test]
     fn test_nonnative_neg() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -896,6 +909,8 @@ mod tests {
 
     #[test]
     fn test_nonnative_inv() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -920,6 +935,8 @@ mod tests {
 
     #[test]
     fn test_witness() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
@@ -949,6 +966,8 @@ mod tests {
 
     #[test]
     fn test_assert_greater_nonnative() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Base;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;

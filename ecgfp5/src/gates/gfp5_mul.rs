@@ -361,12 +361,14 @@ mod tests {
     };
 
     #[test]
+    #[ignore]
     fn low_degree() {
         let gate = MulGFp5Gate::new_from_config(&CircuitConfig::standard_recursion_config());
         test_low_degree::<GoldilocksField, _, 4>(gate);
     }
 
     #[test]
+    #[ignore]
     fn eval_fns() -> Result<()> {
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;

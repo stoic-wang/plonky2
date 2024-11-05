@@ -77,7 +77,12 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     fn test_list_le(size: usize, num_bits: usize) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

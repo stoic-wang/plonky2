@@ -16,6 +16,8 @@ default = ["parallel", "std", "timing"]
 parallel = ["plonky2/parallel", "plonky2_maybe_rayon/parallel"]
 std = ["anyhow/std", "plonky2/std"]
 timing = ["plonky2/timing"]
+cuda = ["cryptography_cuda/cuda", "plonky2/cuda"]
+no_cuda = ["cryptography_cuda/no_cuda", "plonky2/no_cuda"]
 
 [dependencies]
 ahash = { workspace = true }
@@ -24,6 +26,8 @@ hashbrown = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 num-bigint = { version = "0.4.3", default-features = false }
+cryptography_cuda = { workspace = true, optional = true }
+
 
 # Local dependencies
 plonky2 = { version = "0.2.2", path = "../plonky2", default-features = false }
