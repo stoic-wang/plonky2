@@ -176,9 +176,14 @@ mod tests {
         },
     };
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     #[ignore]
     fn test_glv_gadget() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

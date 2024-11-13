@@ -74,7 +74,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize> D
 impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
     PolynomialBatch<F, C, D>
 {
-    // #[cfg(not(feature = "cuda"))]
+    #[cfg(not(feature = "cuda"))]
     /// Creates a list polynomial commitment for the polynomials interpolating the values in `values`.
     pub fn from_values(
         values: Vec<PolynomialValues<F>>,
@@ -120,174 +120,170 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         )
     }
 
-    // #[cfg(feature = "cuda")]
-    // pub fn from_values(
-    //     values: Vec<PolynomialValues<F>>,
-    //     rate_bits: usize,
-    //     blinding: bool,
-    //     cap_height: usize,
-    //     timing: &mut TimingTree,
-    //     fft_root_table: Option<&FftRootTable<F>>,
-    // ) -> Self {
-    //     let degree = values[0].len();
-    //     let log_n = log2_strict(degree);
+    #[cfg(feature = "cuda")]
+    pub fn from_values(
+        values: Vec<PolynomialValues<F>>,
+        rate_bits: usize,
+        blinding: bool,
+        cap_height: usize,
+        timing: &mut TimingTree,
+        fft_root_table: Option<&FftRootTable<F>>,
+    ) -> Self {
+        let degree = values[0].len();
+        let log_n = log2_strict(degree);
 
-    //     if log_n + rate_bits > 1 && values.len() > 0 {
-    //         let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
-    //             .expect("NUM_OF_GPUS should be set")
-    //             .parse()
-    //             .unwrap();
+        if log_n + rate_bits > 1 && values.len() > 0 {
+            let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
+                .expect("NUM_OF_GPUS should be set")
+                .parse()
+                .unwrap();
 
-    //         Self::from_values_gpu(
-    //             values.as_slice(),
-    //             rate_bits,
-    //             blinding,
-    //             cap_height,
-    //             timing,
-    //             fft_root_table,
-    //             log_n,
-    //             degree,
-    //         )
-    //     } else {
-    //         Self::from_values_cpu(
-    //             values,
-    //             rate_bits,
-    //             blinding,
-    //             cap_height,
-    //             timing,
-    //             fft_root_table,
-    //         )
-    //     }
-    // }
+            Self::from_values_gpu(
+                values.as_slice(),
+                rate_bits,
+                blinding,
+                cap_height,
+                timing,
+                fft_root_table,
+                log_n,
+                degree,
+            )
+        } else {
+            Self::from_values_cpu(
+                values,
+                rate_bits,
+                blinding,
+                cap_height,
+                timing,
+                fft_root_table,
+            )
+        }
+    }
 
-    // #[cfg(feature = "cuda")]
-    // pub fn from_values_gpu(
-    //     values: &[PolynomialValues<F>],
-    //     rate_bits: usize,
-    //     blinding: bool,
-    //     cap_height: usize,
-    //     timing: &mut TimingTree,
-    //     _fft_root_table: Option<&FftRootTable<F>>,
-    //     log_n: usize,
-    //     degree: usize,
-    // ) -> Self {
-    //     let output_domain_size = log_n + rate_bits;
-    //     println!("This happens at the start");
+    #[cfg(feature = "cuda")]
+    pub fn from_values_gpu(
+        values: &[PolynomialValues<F>],
+        rate_bits: usize,
+        blinding: bool,
+        cap_height: usize,
+        timing: &mut TimingTree,
+        _fft_root_table: Option<&FftRootTable<F>>,
+        log_n: usize,
+        degree: usize,
+    ) -> Self {
+        let output_domain_size = log_n + rate_bits;
 
-    //     let num_gpus: usize = std::env::var("NUM_OF_GPUS")
-    //         .expect("NUM_OF_GPUS should be set")
-    //         .parse()
-    //         .unwrap();
+        let num_gpus: usize = std::env::var("NUM_OF_GPUS")
+            .expect("NUM_OF_GPUS should be set")
+            .parse()
+            .unwrap();
 
-    //     let total_num_of_fft = values.len();
-    //     // println!("total_num_of_fft: {:?}", total_num_of_fft);
+        let total_num_of_fft = values.len();
+        // println!("total_num_of_fft: {:?}", total_num_of_fft);
 
-    //     let total_num_input_elements = total_num_of_fft * (1 << log_n);
-    //     let total_num_output_elements = total_num_of_fft * (1 << output_domain_size);
+        let total_num_input_elements = total_num_of_fft * (1 << log_n);
+        let total_num_output_elements = total_num_of_fft * (1 << output_domain_size);
 
-    //     let mut gpu_input: Vec<F> = values
-    //         .into_iter()
-    //         .flat_map(|v| v.values.iter().cloned())
-    //         .collect();
+        let mut gpu_input: Vec<F> = values
+            .into_iter()
+            .flat_map(|v| v.values.iter().cloned())
+            .collect();
 
-    //     let mut device_data: HostOrDeviceSlice<'_, F> =
-    //         HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_input_elements).unwrap();
-    //     println!("This happens first");
+        let mut device_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_input_elements).unwrap();
 
-    //     let _ret = device_data.copy_from_host(&gpu_input);
+        let _ret = device_data.copy_from_host(&gpu_input);
 
-    //     let mut cfg_ntt = NTTConfig::default();
+        let mut cfg_ntt = NTTConfig::default();
 
-    //     println!("This happens");
-    //     intt_batch(0, device_data.as_mut_ptr(), log_n, cfg_ntt.clone());
-    //     println!("This happens2");
-    //     let mut cfg_lde = NTTConfig::default();
-    //     cfg_lde.batches = total_num_of_fft as u32;
-    //     cfg_lde.extension_rate_bits = rate_bits as u32;
-    //     cfg_lde.are_inputs_on_device = true;
-    //     cfg_lde.are_outputs_on_device = true;
-    //     cfg_lde.with_coset = true;
-    //     cfg_lde.is_multi_gpu = true;
+        intt_batch(0, device_data.as_mut_ptr(), log_n, cfg_ntt.clone());
+        let mut cfg_lde = NTTConfig::default();
+        cfg_lde.batches = total_num_of_fft as u32;
+        cfg_lde.extension_rate_bits = rate_bits as u32;
+        cfg_lde.are_inputs_on_device = true;
+        cfg_lde.are_outputs_on_device = true;
+        cfg_lde.with_coset = true;
+        cfg_lde.is_multi_gpu = true;
 
-    //     let mut device_output_data: HostOrDeviceSlice<'_, F> =
-    //         HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
-    //     if num_gpus == 1 {
-    //         let _ = timed!(
-    //             timing,
-    //             "LDE on 1 GPU",
-    //             lde_batch(
-    //                 0,
-    //                 device_output_data.as_mut_ptr(),
-    //                 device_data.as_mut_ptr(),
-    //                 log_n,
-    //                 cfg_lde.clone()
-    //             )
-    //         );
-    //     } else {
-    //         let _ = timed!(
-    //             timing,
-    //             "LDE on multi GPU",
-    //             lde_batch_multi_gpu::<F>(
-    //                 device_output_data.as_mut_ptr(),
-    //                 device_data.as_mut_ptr(),
-    //                 num_gpus,
-    //                 cfg_lde.clone(),
-    //                 log_n,
-    //             )
-    //         );
-    //     }
+        let mut device_output_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+        if num_gpus == 1 {
+            let _ = timed!(
+                timing,
+                "LDE on 1 GPU",
+                lde_batch(
+                    0,
+                    device_output_data.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
+                    log_n,
+                    cfg_lde.clone()
+                )
+            );
+        } else {
+            let _ = timed!(
+                timing,
+                "LDE on multi GPU",
+                lde_batch_multi_gpu::<F>(
+                    device_output_data.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
+                    num_gpus,
+                    cfg_lde.clone(),
+                    log_n,
+                )
+            );
+        }
 
-    //     let mut coeffs_1d = vec![F::ZERO; total_num_input_elements];
-    //     device_data
-    //         .copy_to_host(coeffs_1d.as_mut_slice(), total_num_input_elements)
-    //         .unwrap();
+        let mut coeffs_1d = vec![F::ZERO; total_num_input_elements];
+        device_data
+            .copy_to_host(coeffs_1d.as_mut_slice(), total_num_input_elements)
+            .unwrap();
 
-    //     let chunk_size = 1 << log_n;
-    //     let coeffs_batch: Vec<PolynomialCoeffs<F>> = coeffs_1d
-    //         .chunks(chunk_size)
-    //         .map(|chunk| PolynomialCoeffs {
-    //             coeffs: chunk.to_vec(),
-    //         })
-    //         .collect();
+        let chunk_size = 1 << log_n;
+        let coeffs_batch: Vec<PolynomialCoeffs<F>> = coeffs_1d
+            .chunks(chunk_size)
+            .map(|chunk| PolynomialCoeffs {
+                coeffs: chunk.to_vec(),
+            })
+            .collect();
 
-    //     let mut cfg_trans = TransposeConfig::default();
-    //     cfg_trans.batches = total_num_of_fft as u32;
-    //     cfg_trans.are_inputs_on_device = true;
-    //     cfg_trans.are_outputs_on_device = true;
+        let mut cfg_trans = TransposeConfig::default();
+        cfg_trans.batches = total_num_of_fft as u32;
+        cfg_trans.are_inputs_on_device = true;
+        cfg_trans.are_outputs_on_device = true;
 
-    //     let mut device_transpose_data: HostOrDeviceSlice<'_, F> =
-    //         HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+        let mut device_transpose_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
 
-    //     let _ = timed!(
-    //         timing,
-    //         "transpose",
-    //         transpose_rev_batch(
-    //             0 as i32,
-    //             device_transpose_data.as_mut_ptr(),
-    //             device_output_data.as_mut_ptr(),
-    //             output_domain_size,
-    //             cfg_trans
-    //         )
-    //     );
+        let _ = timed!(
+            timing,
+            "transpose",
+            transpose_rev_batch(
+                0 as i32,
+                device_transpose_data.as_mut_ptr(),
+                device_output_data.as_mut_ptr(),
+                output_domain_size,
+                cfg_trans
+            )
+        );
 
-    //     let mt = timed!(
-    //         timing,
-    //         "Merkle tree with GPU data",
-    //         MerkleTree::new_from_gpu_leaves(
-    //             &device_transpose_data,
-    //             1 << output_domain_size,
-    //             total_num_of_fft,
-    //             cap_height
-    //         )
-    //     );
-    //     Self {
-    //         polynomials: coeffs_batch,
-    //         merkle_tree: mt,
-    //         degree_log: log2_strict(degree),
-    //         rate_bits,
-    //         blinding,
-    //     }
-    // }
+        let mt = timed!(
+            timing,
+            "Merkle tree with GPU data",
+            MerkleTree::new_from_gpu_leaves(
+                &device_transpose_data,
+                1 << output_domain_size,
+                total_num_of_fft,
+                cap_height
+            )
+        );
+        Self {
+            polynomials: coeffs_batch,
+            merkle_tree: mt,
+            degree_log: log2_strict(degree),
+            rate_bits,
+            blinding,
+        }
+    }
 
     /// Creates a list polynomial commitment for the polynomials `polynomials`.
     pub fn from_coeffs_cpu(

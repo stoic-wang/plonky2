@@ -14,6 +14,8 @@ use crate::plonk::circuit_data::CircuitConfig;
 use crate::plonk::config::GenericConfig;
 use crate::plonk::vars::{EvaluationTargets, EvaluationVars, EvaluationVarsBaseBatch};
 use crate::plonk::verifier::verify;
+#[cfg(feature = "cuda")]
+use crate::util::test_utils::init_cuda;
 use crate::util::{log2_ceil, transpose};
 
 const WITNESS_SIZE: usize = 1 << 5;
@@ -22,6 +24,8 @@ const WITNESS_DEGREE: usize = WITNESS_SIZE - 1;
 /// Tests that the constraints imposed by the given gate are low-degree by applying them to random
 /// low-degree witness polynomials.
 pub fn test_low_degree<F: RichField + Extendable<D>, G: Gate<F, D>, const D: usize>(gate: G) {
+    // #[cfg(feature = "cuda")]
+    // init_cuda();
     let rate_bits = log2_ceil(gate.degree() + 1);
 
     let wire_ldes = random_low_degree_matrix::<F::Extension>(gate.num_wires(), rate_bits);
@@ -94,6 +98,8 @@ pub fn test_eval_fns<
 >(
     gate: G,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    init_cuda();
     // Test that `eval_unfiltered` and `eval_unfiltered_base` are coherent.
     let wires_base = F::rand_vec(gate.num_wires());
     let constants_base = F::rand_vec(gate.num_constants());

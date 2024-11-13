@@ -26,6 +26,7 @@ itertools = "0.10"
 serde = "1"
 rand = { version = "0.8.5", default-features = false, features = ["getrandom"] }
 hex = "0.4.3"
+cryptography_cuda = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8.5", features = ["min_const_gen"] }
@@ -45,3 +46,7 @@ harness = false
 [[bench]]
 name = "schnorr"
 harness = false
+
+[features]
+cuda = ["cryptography_cuda/cuda", "plonky2/cuda"]
+no_cuda = ["cryptography_cuda/no_cuda", "plonky2/no_cuda"]
