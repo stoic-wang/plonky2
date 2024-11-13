@@ -132,7 +132,10 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let degree = values[0].len();
         let log_n = log2_strict(degree);
 
-        if log_n + rate_bits > 1 && values.len() > 0 {
+        if log_n > 1 && log_n + rate_bits > 1 && values.len() > 0 {
+            #[cfg(any(test, doctest))]
+            init_gpu();
+
             let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
                 .expect("NUM_OF_GPUS should be set")
                 .parse()
@@ -179,7 +182,8 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             .unwrap();
 
         let total_num_of_fft = values.len();
-        // println!("total_num_of_fft: {:?}", total_num_of_fft);
+        println!("total_num_of_fft: {:?}", total_num_of_fft);
+        // println!("fft_size: {:?}", log_n);
 
         let total_num_input_elements = total_num_of_fft * (1 << log_n);
         let total_num_output_elements = total_num_of_fft * (1 << output_domain_size);
@@ -195,8 +199,12 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let _ret = device_data.copy_from_host(&gpu_input);
 
         let mut cfg_ntt = NTTConfig::default();
+        cfg_ntt.are_inputs_on_device = true;
+        cfg_ntt.are_outputs_on_device = true;
+        cfg_ntt.batches = total_num_of_fft as u32;
 
         intt_batch(0, device_data.as_mut_ptr(), log_n, cfg_ntt.clone());
+
         let mut cfg_lde = NTTConfig::default();
         cfg_lde.batches = total_num_of_fft as u32;
         cfg_lde.extension_rate_bits = rate_bits as u32;
@@ -207,6 +215,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
         let mut device_output_data: HostOrDeviceSlice<'_, F> =
             HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+
         if num_gpus == 1 {
             let _ = timed!(
                 timing,
@@ -276,6 +285,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 cap_height
             )
         );
+
+        drop(device_transpose_data);
+        drop(device_output_data);
+        drop(device_data);
+
+        assert_eq!(coeffs_batch.len(), values.len());
+
         Self {
             polynomials: coeffs_batch,
             merkle_tree: mt,
@@ -347,11 +363,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Self {
+
         let pols = polynomials.len();
         let degree = polynomials[0].len();
         let log_n = log2_strict(degree);
 
         if log_n + rate_bits > 1 && polynomials.len() > 0 {
+            #[cfg(any(test, doctest))]
+            init_gpu();
+
             let _num_gpus: usize = std::env::var("NUM_OF_GPUS")
                 .expect("NUM_OF_GPUS should be set")
                 .parse()
@@ -423,11 +443,16 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let mut cfg_lde = NTTConfig::default();
         cfg_lde.batches = total_num_of_fft as u32;
         cfg_lde.extension_rate_bits = rate_bits as u32;
-        cfg_lde.are_inputs_on_device = false;
+        cfg_lde.are_inputs_on_device = true;
         cfg_lde.are_outputs_on_device = true;
         cfg_lde.with_coset = true;
         cfg_lde.is_multi_gpu = true;
         cfg_lde.salt_size = salt_size as u32;
+
+        let mut device_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_input_elements).unwrap();
+
+        let _ret = device_data.copy_from_host(&gpu_input);
 
         let mut device_output_data: HostOrDeviceSlice<'_, F> =
             HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
@@ -438,7 +463,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 lde_batch(
                     0,
                     device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
                     log_n,
                     cfg_lde.clone()
                 )
@@ -449,7 +474,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 "LDE on multi GPU",
                 lde_batch_multi_gpu::<F>(
                     device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
+                    device_data.as_mut_ptr(),
                     num_gpus,
                     cfg_lde.clone(),
                     log_n,

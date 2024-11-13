@@ -242,6 +242,8 @@ where
         )
     );
 
+    println!("NUM_PPZs: {:?}", partial_products_zs_and_lookup_commitment.polynomials.len());
+
     challenger.observe_cap::<C::Hasher>(&partial_products_zs_and_lookup_commitment.merkle_tree.cap);
 
     let alphas = challenger.get_n_challenges(num_challenges);
