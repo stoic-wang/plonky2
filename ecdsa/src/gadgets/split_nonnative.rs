@@ -95,8 +95,13 @@ mod tests {
     use super::*;
     use crate::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget};
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_split_nonnative() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         type FF = Secp256K1Scalar;
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;

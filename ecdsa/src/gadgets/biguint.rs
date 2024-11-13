@@ -374,9 +374,13 @@ mod tests {
     use rand::{rngs::OsRng, Rng};
 
     use crate::gadgets::biguint::{CircuitBuilderBiguint, WitnessBigUint};
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
 
     #[test]
     fn test_biguint_add() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -407,6 +411,8 @@ mod tests {
 
     #[test]
     fn test_biguint_sub() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -437,6 +443,8 @@ mod tests {
 
     #[test]
     fn test_biguint_mul() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -467,6 +475,8 @@ mod tests {
 
     #[test]
     fn test_biguint_cmp() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -493,6 +503,8 @@ mod tests {
 
     #[test]
     fn test_biguint_div_rem() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -526,6 +538,8 @@ mod tests {
 
     #[test]
     fn test_is_zero_biguint() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

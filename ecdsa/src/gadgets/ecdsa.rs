@@ -68,7 +68,12 @@ mod tests {
         ecdsa::{sign_message, ECDSAPublicKey, ECDSASecretKey, ECDSASignature},
     };
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     fn test_ecdsa_circuit_with_config(config: CircuitConfig) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

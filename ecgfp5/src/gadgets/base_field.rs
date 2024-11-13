@@ -868,8 +868,13 @@ mod tests {
         gadgets::scalar_field::{CircuitBuilderScalar, PartialWitnessScalar},
     };
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_add() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -899,6 +904,8 @@ mod tests {
 
     #[test]
     fn test_mul() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -928,6 +935,8 @@ mod tests {
 
     #[test]
     fn test_sub() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -957,6 +966,8 @@ mod tests {
 
     #[test]
     fn test_div() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -986,6 +997,8 @@ mod tests {
 
     #[test]
     fn test_inverse_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1013,6 +1026,8 @@ mod tests {
 
     #[test]
     fn test_any_sqrt_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1036,6 +1051,8 @@ mod tests {
     #[test]
 
     fn test_canonical_sqrt_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1061,6 +1078,8 @@ mod tests {
 
     #[test]
     fn test_try_any_sqrt_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1096,6 +1115,8 @@ mod tests {
     #[test]
 
     fn test_try_canonical_sqrt_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1129,6 +1150,8 @@ mod tests {
 
     #[test]
     fn test_legendre_sym_quintic_ext() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -1187,6 +1210,8 @@ mod tests {
 
     #[test]
     fn test_encode_as_scalar() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

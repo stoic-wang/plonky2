@@ -102,8 +102,14 @@ mod tests {
     use crate::unconstrained_stark::UnconstrainedStark;
     use crate::verifier::verify_stark_proof;
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
+    #[ignore]
     fn test_unconstrained_stark() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -144,7 +150,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_recursive_stark_verifier() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         init_logger();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;

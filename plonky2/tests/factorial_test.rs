@@ -3,11 +3,8 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-
 #[cfg(feature = "cuda")]
-use crate::test_utils::init_cuda;
-#[cfg(feature = "cuda")]
-pub mod test_utils;
+use plonky2::util::test_utils::init_cuda;
 
 #[test]
 fn test_factorial_proof() {
