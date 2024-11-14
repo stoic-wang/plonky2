@@ -17,8 +17,8 @@ gate_testing = []
 parallel = ["hashbrown/rayon", "plonky2_maybe_rayon/parallel"]
 std = ["anyhow/std", "rand/std", "itertools/use_std"]
 timing = ["std", "dep:web-time"]
-cuda = ["cryptography_cuda/cuda"]
-no_cuda = ["cryptography_cuda/no_cuda"]
+cuda = ["zeknox/cuda"]
+no_cuda = ["zeknox/no_cuda"]
 batch = []
 cuda_timing = []
 papi = []
@@ -44,7 +44,7 @@ papi-bindings = { version = "0.5.2" }
 plonky2_field = { version = "0.2.2", path = "../field", default-features = false }
 plonky2_maybe_rayon = { version = "0.2.0", path = "../maybe_rayon", default-features = false }
 plonky2_util = { version = "0.2.0", path = "../util", default-features = false }
-cryptography_cuda = { workspace = true, optional = true }
+zeknox = { workspace = true, optional = true }
 dyn-clone = "1.0.17"
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]

@@ -10,11 +10,11 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 #[cfg(feature = "cuda")]
-use cryptography_cuda::device::memory::HostOrDeviceSlice;
+use zeknox::device::memory::HostOrDeviceSlice;
 #[cfg(feature = "cuda")]
-use cryptography_cuda::device::stream::CudaStream;
+use zeknox::device::stream::CudaStream;
 #[cfg(feature = "cuda")]
-use cryptography_cuda::{
+use zeknox::{
     fill_digests_buf_linear_gpu_with_gpu_ptr, fill_digests_buf_linear_multigpu_with_gpu_ptr,
 };
 use num::range;
@@ -552,7 +552,7 @@ fn fill_digests_buf_cpu<F: RichField, H: Hasher<F>>(
     leaf_size: usize,
     cap_height: usize,
 ) {
-    use cryptography_cuda::fill_digests_buf_linear_cpu;
+    use zeknox::fill_digests_buf_linear_cpu;
 
     let leaves_count = (leaves.len() / leaf_size) as u64;
     let digests_count: u64 = digests_buf.len().try_into().unwrap();

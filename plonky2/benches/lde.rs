@@ -2,7 +2,7 @@ mod allocator;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "cuda")]
-use cryptography_cuda::init_cuda_degree_rs;
+use zeknox::init_cuda_degree_rs;
 use plonky2::field::extension::Extendable;
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::polynomial::PolynomialCoeffs;
