@@ -2,7 +2,7 @@
 use alloc::{format, vec::Vec};
 
 #[cfg(feature = "cuda")]
-use cryptography_cuda::{
+use zeknox::{
     device::memory::HostOrDeviceSlice, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
     types::*,
 };
@@ -33,7 +33,7 @@ pub static GPU_INIT: once_cell::sync::Lazy<std::sync::Arc<std::sync::Mutex<u64>>
 
 #[cfg(all(feature = "cuda", any(test, doctest)))]
 fn init_gpu() {
-    use cryptography_cuda::init_cuda_rs;
+    use zeknox::init_cuda_rs;
 
     let mut init = GPU_INIT.lock().unwrap();
     if *init == 0 {

@@ -1,6 +1,6 @@
 #[cfg(feature = "cuda")]
 pub fn init_cuda() {
-    use cryptography_cuda::{get_number_of_gpus_rs, init_coset_rs, init_twiddle_factors_rs};
+    use zeknox::{get_number_of_gpus_rs, init_coset_rs, init_twiddle_factors_rs};
     use plonky2_field::goldilocks_field::GoldilocksField;
     use plonky2_field::types::{Field, PrimeField64};
 
