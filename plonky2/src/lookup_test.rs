@@ -15,6 +15,8 @@ use crate::plonk::circuit_builder::CircuitBuilder;
 use crate::plonk::circuit_data::CircuitConfig;
 use crate::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use crate::plonk::prover::prove;
+#[cfg(feature = "cuda")]
+use crate::util::test_utils::init_cuda;
 use crate::util::timing::TimingTree;
 
 const D: usize = 2;
@@ -29,6 +31,8 @@ static LOGGER_INITIALIZED: Once = Once::new();
 #[test]
 fn test_no_lookup() -> anyhow::Result<()> {
     init_logger();
+    #[cfg(feature = "cuda")]
+    init_cuda();
 
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);

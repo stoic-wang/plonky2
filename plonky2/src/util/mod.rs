@@ -15,6 +15,7 @@ pub(crate) mod partial_products;
 pub mod reducing;
 pub mod serialization;
 pub mod strided_view;
+pub mod test_utils;
 pub mod timing;
 
 #[cfg(feature = "papi")]

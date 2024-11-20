@@ -155,13 +155,18 @@ mod tests {
     use crate::stark::Stark;
     use crate::stark_testing::{test_stark_circuit_constraints, test_stark_low_degree};
     use crate::verifier::verify_stark_proof;
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
 
     fn fibonacci<F: Field>(n: usize, x0: F, x1: F) -> F {
         (0..n).fold((x0, x1), |x, _| (x.1, x.0 + x.1)).1
     }
 
     #[test]
+    #[ignore]
     fn test_fibonacci_stark() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -209,7 +214,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_recursive_stark_verifier() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         init_logger();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;

@@ -457,8 +457,13 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "cuda")]
+    use plonky2::util::test_utils::init_cuda;
+
     #[test]
     fn test_curve_add() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -488,6 +493,8 @@ mod tests {
 
     #[test]
     fn test_curve_double() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -515,6 +522,8 @@ mod tests {
 
     #[test]
     fn test_curve_scalar_mul() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -545,6 +554,8 @@ mod tests {
 
     #[test]
     fn test_curve_scalar_mul_const() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -574,6 +585,8 @@ mod tests {
 
     #[test]
     fn test_curve_encode() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -601,6 +614,8 @@ mod tests {
 
     #[test]
     fn test_curve_decode() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;
@@ -628,6 +643,8 @@ mod tests {
 
     #[test]
     fn test_curve_muladd_2() -> Result<()> {
+        #[cfg(feature = "cuda")]
+        init_cuda();
         const D: usize = 2;
         type C = PoseidonGoldilocksConfig;
         type F = <C as GenericConfig<D>>::F;

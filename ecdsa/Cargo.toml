@@ -11,6 +11,8 @@ categories.workspace = true
 
 [features]
 parallel = ["plonky2_maybe_rayon/parallel", "plonky2/parallel"]
+cuda = ["cryptography_cuda/cuda", "plonky2/cuda"]
+no_cuda = ["cryptography_cuda/no_cuda", "plonky2/no_cuda"]
 
 [dependencies]
 anyhow = { version = "1.0.40" }
@@ -20,6 +22,7 @@ num = { version = "0.4.0" }
 plonky2 = { path = "../plonky2" }
 plonky2_u32 = { path = "../u32" }
 serde = { version = "1.0", features = ["derive"] }
+cryptography_cuda = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8.4", features = ["getrandom"] }
