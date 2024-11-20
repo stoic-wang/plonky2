@@ -9,6 +9,11 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use num::range;
+#[cfg(feature = "cuda")]
+use once_cell::sync::Lazy;
+use plonky2_maybe_rayon::*;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "cuda")]
 use zeknox::device::memory::HostOrDeviceSlice;
 #[cfg(feature = "cuda")]
@@ -17,11 +22,6 @@ use zeknox::device::stream::CudaStream;
 use zeknox::{
     fill_digests_buf_linear_gpu_with_gpu_ptr, fill_digests_buf_linear_multigpu_with_gpu_ptr,
 };
-use num::range;
-#[cfg(feature = "cuda")]
-use once_cell::sync::Lazy;
-use plonky2_maybe_rayon::*;
-use serde::{Deserialize, Serialize};
 
 #[cfg(all(target_feature = "avx2", target_feature = "avx512dq"))]
 use crate::hash::arch::x86_64::poseidon_goldilocks_avx512::{hash_leaf_avx512, hash_two_avx512};

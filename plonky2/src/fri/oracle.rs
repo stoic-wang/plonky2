@@ -1,14 +1,14 @@
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec::Vec};
 
+use itertools::Itertools;
+use plonky2_field::types::Field;
+use plonky2_maybe_rayon::*;
 #[cfg(feature = "cuda")]
 use zeknox::{
     device::memory::HostOrDeviceSlice, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
     types::*,
 };
-use itertools::Itertools;
-use plonky2_field::types::Field;
-use plonky2_maybe_rayon::*;
 
 use crate::field::extension::Extendable;
 use crate::field::fft::FftRootTable;

@@ -1,8 +1,6 @@
 mod allocator;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-#[cfg(feature = "cuda")]
-use zeknox::init_cuda_degree_rs;
 use plonky2::field::extension::Extendable;
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::polynomial::PolynomialCoeffs;
@@ -11,6 +9,8 @@ use plonky2::hash::hash_types::RichField;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::util::timing::TimingTree;
 use tynm::type_name;
+#[cfg(feature = "cuda")]
+use zeknox::init_cuda_degree_rs;
 
 pub(crate) fn bench_batch_lde<
     F: RichField + Extendable<D>,
