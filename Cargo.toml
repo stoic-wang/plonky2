@@ -3,7 +3,7 @@ members = ["field", "maybe_rayon", "plonky2", "starky", "util", "gen", "u32", "e
 resolver = "2"
 
 [workspace.dependencies]
-zeknox = { git = "https://github.com/okx/zeknox.git", rev = "bfa744a8156850d8ee53d2aeec350981bb32ad4d" }
+zeknox = { git = "https://github.com/okx/zeknox.git", tag = "v1.0.0" }
 ahash = { version = "0.8.7", default-features = false, features = [
     "compile-time-rng",
 ] } # NOTE: Be sure to keep this version the same as the dependency in `hashbrown`.
