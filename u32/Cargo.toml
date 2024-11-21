@@ -14,11 +14,11 @@ anyhow = { version = "1.0.40", default-features = false }
 itertools = { version = "0.10.0", default-features = false }
 num = { version = "0.4", default-features = false }
 plonky2 = { path = "../plonky2" }
-cryptography_cuda = { workspace = true, optional = true }
+zeknox = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8.4", default-features = false, features = ["getrandom"] }
 
 [features]
-cuda = ["cryptography_cuda/cuda", "plonky2/cuda"]
-no_cuda = ["cryptography_cuda/no_cuda", "plonky2/no_cuda"]
+cuda = ["zeknox/cuda", "plonky2/cuda"]
+no_cuda = ["zeknox/no_cuda", "plonky2/no_cuda"]

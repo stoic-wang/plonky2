@@ -9,19 +9,19 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Instant;
 
-#[cfg(feature = "cuda")]
-use cryptography_cuda::device::memory::HostOrDeviceSlice;
-#[cfg(feature = "cuda")]
-use cryptography_cuda::device::stream::CudaStream;
-#[cfg(feature = "cuda")]
-use cryptography_cuda::{
-    fill_digests_buf_linear_gpu_with_gpu_ptr, fill_digests_buf_linear_multigpu_with_gpu_ptr,
-};
 use num::range;
 #[cfg(feature = "cuda")]
 use once_cell::sync::Lazy;
 use plonky2_maybe_rayon::*;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "cuda")]
+use zeknox::device::memory::HostOrDeviceSlice;
+#[cfg(feature = "cuda")]
+use zeknox::device::stream::CudaStream;
+#[cfg(feature = "cuda")]
+use zeknox::{
+    fill_digests_buf_linear_gpu_with_gpu_ptr, fill_digests_buf_linear_multigpu_with_gpu_ptr,
+};
 
 #[cfg(all(target_feature = "avx2", target_feature = "avx512dq"))]
 use crate::hash::arch::x86_64::poseidon_goldilocks_avx512::{hash_leaf_avx512, hash_two_avx512};
@@ -552,7 +552,7 @@ fn fill_digests_buf_cpu<F: RichField, H: Hasher<F>>(
     leaf_size: usize,
     cap_height: usize,
 ) {
-    use cryptography_cuda::fill_digests_buf_linear_cpu;
+    use zeknox::fill_digests_buf_linear_cpu;
 
     let leaves_count = (leaves.len() / leaf_size) as u64;
     let digests_count: u64 = digests_buf.len().try_into().unwrap();

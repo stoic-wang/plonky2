@@ -16,18 +16,9 @@ rustup override set nightly
 
 ## Poseidon Hash on GPU (CUDA)
 
-Build the shared library
-
-```
-cd cryptography_cuda/cuda/merkle
-make lib
-make libgpu
-```
-
 Run tests (in plonky2 folder)
 
 ```
-export LD_LIBRARY_PATH=<path-to cryptography_cuda/cuda/merkle>
 # CPU-only
 cargo test -- --nocapture merkle_trees
 # GPU
@@ -40,13 +31,6 @@ Run benchmarks
 cargo bench merkle
 # GPU
 cargo bench --features=cuda merkle
-```
-
-Run microbenchmarks
-
-```
-cd cryptography_cuda/cuda/merkle
-./run-benchmark.sh
 ```
 
 ## License
