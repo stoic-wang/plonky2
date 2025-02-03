@@ -3,7 +3,7 @@ members = ["field", "maybe_rayon", "plonky2", "starky", "util"]
 resolver = "2"
 
 [workspace.dependencies]
-cryptography_cuda = { git = "ssh://git@github.com/okx/cryptography_cuda.git", rev = "eaf98307c47e96a51ffe79deeecc7a171dfa2857" }
+zeknox = { git = "https://github.com/okx/zeknox.git", rev = "500ce15c50d31bd48b466e4571cad2c66bacf368" }
 ahash = { version = "0.8.7", default-features = false, features = ["compile-time-rng"] } # NOTE: Be sure to keep this version the same as the dependency in `hashbrown`.
 anyhow = { version = "1.0.40", default-features = false }
 hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "serde"] } # NOTE: When upgrading, see `ahash` dependency.

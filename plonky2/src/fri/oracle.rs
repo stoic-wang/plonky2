@@ -2,7 +2,7 @@
 use alloc::{format, vec::Vec};
 
 #[cfg(feature = "cuda")]
-use cryptography_cuda::{
+use zeknox::{
     device::memory::HostOrDeviceSlice, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
     types::*,
 };
