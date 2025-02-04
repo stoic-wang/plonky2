@@ -110,7 +110,7 @@ impl<F: RichField, H: Hasher<F>> Default for MerkleTree<F, H> {
     }
 }
 
-fn capacity_up_to_mut<T>(v: &mut Vec<T>, len: usize) -> &mut [MaybeUninit<T>] {
+pub(crate) fn capacity_up_to_mut<T>(v: &mut Vec<T>, len: usize) -> &mut [MaybeUninit<T>] {
     assert!(v.capacity() >= len);
     let v_ptr = v.as_mut_ptr().cast::<MaybeUninit<T>>();
     unsafe {
@@ -122,7 +122,7 @@ fn capacity_up_to_mut<T>(v: &mut Vec<T>, len: usize) -> &mut [MaybeUninit<T>] {
     }
 }
 
-fn fill_subtree<F: RichField, H: Hasher<F>>(
+pub(crate) fn fill_subtree<F: RichField, H: Hasher<F>>(
     digests_buf: &mut [MaybeUninit<H::Hash>],
     leaves: &[F],
     leaf_size: usize,
@@ -192,7 +192,7 @@ fn fill_subtree<F: RichField, H: Hasher<F>>(
     hash
 }
 
-fn fill_digests_buf<F: RichField, H: Hasher<F>>(
+pub(crate) fn fill_digests_buf<F: RichField, H: Hasher<F>>(
     digests_buf: &mut [MaybeUninit<H::Hash>],
     cap_buf: &mut [MaybeUninit<H::Hash>],
     leaves: &Vec<F>,
@@ -465,6 +465,62 @@ fn fill_digests_buf_meta<F: RichField, H: Hasher<F>>(
     fill_digests_buf::<F, H>(digests_buf, cap_buf, leaves, leaf_size, cap_height);
 }
 
+pub(crate) fn merkle_tree_prove<F: RichField, H: Hasher<F>>(
+    leaf_index: usize,
+    leaves_len: usize,
+    cap_height: usize,
+    digests: &[H::Hash],
+) -> Vec<H::Hash> {
+    let num_layers = log2_strict(leaves_len) - cap_height;
+    debug_assert_eq!(leaf_index >> (cap_height + num_layers), 0);
+
+    let digest_len = 2 * (leaves_len - (1 << cap_height));
+    assert_eq!(digest_len, digests.len());
+
+    let digest_tree: &[H::Hash] = {
+        let tree_index = leaf_index >> num_layers;
+        let tree_len = digest_len >> cap_height;
+        &digests[tree_len * tree_index..tree_len * (tree_index + 1)]
+    };
+
+    // Mask out high bits to get the index within the sub-tree.
+    let mut pair_index = leaf_index & ((1 << num_layers) - 1);
+    (0..num_layers)
+        .map(|i| {
+            let parity = pair_index & 1;
+            pair_index >>= 1;
+
+            // The layers' data is interleaved as follows:
+            // [layer 0, layer 1, layer 0, layer 2, layer 0, layer 1, layer 0, layer 3, ...].
+            // Each of the above is a pair of siblings.
+            // `pair_index` is the index of the pair within layer `i`.
+            // The index of that the pair within `digests` is
+            // `pair_index * 2 ** (i + 1) + (2 ** i - 1)`.
+            let siblings_index = (pair_index << (i + 1)) + (1 << i) - 1;
+            // We have an index for the _pair_, but we want the index of the _sibling_.
+            // Double the pair index to get the index of the left sibling. Conditionally add `1`
+            // if we are to retrieve the right sibling.
+            let sibling_index = 2 * siblings_index + (1 - parity);
+            digest_tree[sibling_index]
+        })
+        .collect()
+}
+
+pub(crate) fn flatten_leaves<F: RichField>(leaves_2d: &Vec<Vec<F>>) -> (Vec<F>, usize) {
+    let leaf_size = leaves_2d[0].len();
+    let leaves_count = leaves_2d.len();
+    let zeros = vec![F::from_canonical_u64(0); leaf_size];
+    let mut leaves_1d: Vec<F> = Vec::with_capacity(leaves_count * leaf_size);
+    for idx in 0..leaves_count {
+        if leaves_2d[idx].len() == 0 {
+            leaves_1d.extend(zeros.clone());
+        } else {
+            leaves_1d.extend(leaves_2d[idx].clone());
+        }
+    }
+    (leaves_1d, leaf_size)
+}
+
 impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
     pub fn new_from_1d(leaves_1d: Vec<F>, leaf_size: usize, cap_height: usize) -> Self {
         let leaves_len = leaves_1d.len() / leaf_size;
@@ -513,17 +569,7 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
     }
 
     pub fn new_from_2d(leaves_2d: Vec<Vec<F>>, cap_height: usize) -> Self {
-        let leaf_size = leaves_2d[0].len();
-        let leaves_count = leaves_2d.len();
-        let zeros = vec![F::from_canonical_u64(0); leaf_size];
-        let mut leaves_1d: Vec<F> = Vec::with_capacity(leaves_count * leaf_size);
-        for idx in 0..leaves_count {
-            if leaves_2d[idx].len() == 0 {
-                leaves_1d.extend(zeros.clone());
-            } else {
-                leaves_1d.extend(leaves_2d[idx].clone());
-            }
-        }
+        let (leaves_1d, leaf_size) = flatten_leaves(&leaves_2d);
         Self::new_from_1d(leaves_1d, leaf_size, cap_height)
     }
 
@@ -810,39 +856,15 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
     /// Create a Merkle proof from a leaf index.
     pub fn prove(&self, leaf_index: usize) -> MerkleProof<F, H> {
         let cap_height = log2_strict(self.cap.len());
-        let num_layers = log2_strict(self.get_leaves_count()) - cap_height;
-        let subtree_digest_size = (1 << (num_layers + 1)) - 2; // 2 ^ (k+1) - 2
-        let subtree_idx = leaf_index / (1 << num_layers);
-
-        let siblings: Vec<<H as Hasher<F>>::Hash> = Vec::with_capacity(num_layers);
-        if num_layers == 0 {
-            return MerkleProof { siblings };
-        }
-
-        // digests index where we start
-        let idx = subtree_digest_size - (1 << num_layers) + (leaf_index % (1 << num_layers));
-
-        let siblings = (0..num_layers)
-            .map(|i| {
-                // relative index
-                let rel_idx = (idx + 2 - (1 << i + 1)) / (1 << i);
-                // absolute index
-                let mut abs_idx = subtree_idx * subtree_digest_size + rel_idx;
-                if (rel_idx & 1) == 1 {
-                    abs_idx -= 1;
-                } else {
-                    abs_idx += 1;
-                }
-                self.digests[abs_idx]
-            })
-            .collect();
+        let siblings =
+            merkle_tree_prove::<F, H>(leaf_index, self.leaves.len(), cap_height, &self.digests);
 
         MerkleProof { siblings }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use anyhow::Result;
 
     use super::*;
@@ -853,7 +875,7 @@ mod tests {
         GenericConfig, KeccakGoldilocksConfig, Poseidon2GoldilocksConfig, PoseidonGoldilocksConfig,
     };
 
-    fn random_data<F: RichField>(n: usize, k: usize) -> Vec<Vec<F>> {
+    pub(crate) fn random_data<F: RichField>(n: usize, k: usize) -> Vec<Vec<F>> {
         (0..n).map(|_| F::rand_vec(k)).collect()
     }
 

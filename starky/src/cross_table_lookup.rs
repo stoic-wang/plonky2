@@ -19,7 +19,8 @@
 //! - Z(gw) = Z(w) * combine(w) where combine(w) is the column combination at point w.
 //! - Z(g^(n-1)) = combine(1).
 //! - The verifier also checks that the product of looking table Z polynomials is equal
-//! to the associated looked table Z polynomial.
+//!   to the associated looked table Z polynomial.
+//!
 //! Note that the first two checks are written that way because Z polynomials are computed
 //! upside down for convenience.
 //!
@@ -29,11 +30,11 @@
 
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
-use core::cmp::min;
 use core::fmt::Debug;
 use core::iter::once;
 
 use anyhow::{ensure, Result};
+use hashbrown::HashMap;
 use itertools::Itertools;
 use plonky2::field::extension::{Extendable, FieldExtension};
 use plonky2::field::packed::PackedField;
@@ -53,7 +54,7 @@ use crate::lookup::{
     eval_helper_columns, eval_helper_columns_circuit, get_grand_product_challenge_set,
     get_helper_cols, Column, ColumnFilter, Filter, GrandProductChallenge, GrandProductChallengeSet,
 };
-use crate::proof::{MultiProof, StarkProofTarget, StarkProofWithMetadata};
+use crate::proof::{StarkProof, StarkProofTarget};
 use crate::stark::Stark;
 
 /// An alias for `usize`, to represent the index of a STARK table in a multi-STARK setting.
@@ -184,7 +185,7 @@ impl<'a, F: Field> CtlZData<'a, F> {
     }
 }
 
-impl<'a, F: Field> CtlData<'a, F> {
+impl<F: Field> CtlData<'_, F> {
     /// Returns all the cross-table lookup helper polynomials.
     pub(crate) fn ctl_helper_polys(&self) -> Vec<PolynomialValues<F>> {
         let num_polys = self
@@ -248,58 +249,6 @@ where
     (ctl_challenges, ctl_data)
 }
 
-/// Outputs all the CTL data necessary to prove a multi-STARK system.
-pub fn get_ctl_vars_from_proofs<'a, F, C, const D: usize, const N: usize>(
-    multi_proof: &MultiProof<F, C, D, N>,
-    all_cross_table_lookups: &'a [CrossTableLookup<F>],
-    ctl_challenges: &'a GrandProductChallengeSet<F>,
-    num_lookup_columns: &'a [usize; N],
-    max_constraint_degree: usize,
-) -> [Vec<CtlCheckVars<'a, F, <F as Extendable<D>>::Extension, <F as Extendable<D>>::Extension, D>>;
-       N]
-where
-    F: RichField + Extendable<D>,
-    C: GenericConfig<D, F = F>,
-{
-    let num_ctl_helper_cols =
-        num_ctl_helper_columns_by_table(all_cross_table_lookups, max_constraint_degree);
-
-    CtlCheckVars::from_proofs(
-        &multi_proof.stark_proofs,
-        all_cross_table_lookups,
-        ctl_challenges,
-        num_lookup_columns,
-        &num_ctl_helper_cols,
-    )
-}
-/// Returns the number of helper columns for each `Table`.
-pub(crate) fn num_ctl_helper_columns_by_table<F: Field, const N: usize>(
-    ctls: &[CrossTableLookup<F>],
-    constraint_degree: usize,
-) -> Vec<[usize; N]> {
-    let mut res = vec![[0; N]; ctls.len()];
-    for (i, ctl) in ctls.iter().enumerate() {
-        let CrossTableLookup {
-            looking_tables,
-            looked_table: _,
-        } = ctl;
-        let mut num_by_table = [0; N];
-
-        let grouped_lookups = looking_tables.iter().group_by(|&a| a.table);
-
-        for (table, group) in grouped_lookups.into_iter() {
-            let sum = group.count();
-            if sum > 1 {
-                // We only need helper columns if there are at least 2 columns.
-                num_by_table[table] = sum.div_ceil(constraint_degree - 1);
-            }
-        }
-
-        res[i] = num_by_table;
-    }
-    res
-}
-
 /// Gets the auxiliary polynomials associated to these CTL data.
 pub(crate) fn get_ctl_auxiliary_polys<F: Field>(
     ctl_data: Option<&CtlData<F>>,
@@ -316,6 +265,7 @@ pub(crate) fn get_ctl_auxiliary_polys<F: Field>(
 /// - `cross_table_lookups` corresponds to all the cross-table lookups, i.e. the looked and looking tables, as described in `CrossTableLookup`.
 /// - `ctl_challenges` corresponds to the challenges used for CTLs.
 /// - `constraint_degree` is the maximal constraint degree for the table.
+///
 /// For each `CrossTableLookup`, and each looking/looked table, the partial products for the CTL are computed, and added to the said table's `CtlZData`.
 pub(crate) fn cross_table_lookup_data<'a, F: RichField, const D: usize, const N: usize>(
     trace_poly_values: &[Vec<PolynomialValues<F>>; N],
@@ -489,104 +439,82 @@ where
 impl<'a, F: RichField + Extendable<D>, const D: usize>
     CtlCheckVars<'a, F, F::Extension, F::Extension, D>
 {
-    /// Extracts the `CtlCheckVars` for each STARK.
-    pub fn from_proofs<C: GenericConfig<D, F = F>, const N: usize>(
-        proofs: &[StarkProofWithMetadata<F, C, D>; N],
+    /// Extracts the `CtlCheckVars` from a single proof.
+    pub fn from_proof<C: GenericConfig<D, F = F>>(
+        table_idx: TableIdx,
+        proof: &StarkProof<F, C, D>,
         cross_table_lookups: &'a [CrossTableLookup<F>],
         ctl_challenges: &'a GrandProductChallengeSet<F>,
-        num_lookup_columns: &[usize; N],
-        num_helper_ctl_columns: &Vec<[usize; N]>,
-    ) -> [Vec<Self>; N] {
-        let mut ctl_vars_per_table = [0; N].map(|_| vec![]);
-        // If there are no auxiliary polys in the proofs `openings`,
-        // return early. The verifier will reject the proofs when
-        // calling `validate_proof_shape`.
-        if proofs
-            .iter()
-            .any(|p| p.proof.openings.auxiliary_polys.is_none())
-        {
-            return ctl_vars_per_table;
-        }
+        num_lookup_columns: usize,
+        total_num_helper_columns: usize,
+        num_helper_ctl_columns: &[usize],
+    ) -> Vec<Self> {
+        // Get all cross-table lookup polynomial openings for the provided STARK proof.
+        let ctl_zs = {
+            let auxiliary_polys = proof
+                .openings
+                .auxiliary_polys
+                .as_ref()
+                .expect("We cannot have CTLs without auxiliary polynomials.");
+            let auxiliary_polys_next = proof
+                .openings
+                .auxiliary_polys_next
+                .as_ref()
+                .expect("We cannot have CTLs without auxiliary polynomials.");
 
-        let mut total_num_helper_cols_by_table = [0; N];
-        for p_ctls in num_helper_ctl_columns {
-            for j in 0..N {
-                total_num_helper_cols_by_table[j] += p_ctls[j] * ctl_challenges.challenges.len();
-            }
-        }
+            auxiliary_polys
+                .iter()
+                .skip(num_lookup_columns)
+                .zip(auxiliary_polys_next.iter().skip(num_lookup_columns))
+                .collect::<Vec<_>>()
+        };
 
-        // Get all cross-table lookup polynomial openings for each STARK proof.
-        let ctl_zs = proofs
-            .iter()
-            .zip(num_lookup_columns)
-            .map(|(p, &num_lookup)| {
-                let openings = &p.proof.openings;
+        let mut z_index = 0;
+        let mut start_index = 0;
+        let mut ctl_vars = vec![];
 
-                let ctl_zs = &openings
-                    .auxiliary_polys
-                    .as_ref()
-                    .expect("We cannot have CTls without auxiliary polynomials.")[num_lookup..];
-                let ctl_zs_next = &openings
-                    .auxiliary_polys_next
-                    .as_ref()
-                    .expect("We cannot have CTls without auxiliary polynomials.")[num_lookup..];
-                ctl_zs.iter().zip(ctl_zs_next).collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        // Put each cross-table lookup polynomial into the correct table data: if a CTL polynomial is extracted from looking/looked table t, then we add it to the `CtlCheckVars` of table t.
-        let mut start_indices = [0; N];
-        let mut z_indices = [0; N];
         for (
+            i,
             CrossTableLookup {
                 looking_tables,
                 looked_table,
             },
-            num_ctls,
-        ) in cross_table_lookups.iter().zip(num_helper_ctl_columns)
+        ) in cross_table_lookups.iter().enumerate()
         {
             for &challenges in &ctl_challenges.challenges {
-                // Group looking tables by `Table`, since we bundle the looking tables taken from the same `Table` together thanks to helper columns.
-                // We want to only iterate on each `Table` once.
-                let mut filtered_looking_tables = Vec::with_capacity(min(looking_tables.len(), N));
-                for table in looking_tables {
-                    if !filtered_looking_tables.contains(&(table.table)) {
-                        filtered_looking_tables.push(table.table);
+                // Group the looking tables by `Table` to process them together.
+                let count = looking_tables
+                    .iter()
+                    .filter(|looking_table| looking_table.table == table_idx)
+                    .count();
+
+                let cols_filts = looking_tables.iter().filter_map(|looking_table| {
+                    if looking_table.table == table_idx {
+                        Some((&looking_table.columns, &looking_table.filter))
+                    } else {
+                        None
                     }
-                }
+                });
 
-                for &table in filtered_looking_tables.iter() {
-                    // We have first all the helper polynomials, then all the z polynomials.
-                    let (looking_z, looking_z_next) =
-                        ctl_zs[table][total_num_helper_cols_by_table[table] + z_indices[table]];
-
-                    let count = looking_tables
-                        .iter()
-                        .filter(|looking_table| looking_table.table == table)
-                        .count();
-                    let cols_filts = looking_tables.iter().filter_map(|looking_table| {
-                        if looking_table.table == table {
-                            Some((&looking_table.columns, &looking_table.filter))
-                        } else {
-                            None
-                        }
-                    });
+                if count > 0 {
                     let mut columns = Vec::with_capacity(count);
                     let mut filter = Vec::with_capacity(count);
                     for (col, filt) in cols_filts {
                         columns.push(&col[..]);
                         filter.push(filt.clone());
                     }
-                    let helper_columns = ctl_zs[table]
-                        [start_indices[table]..start_indices[table] + num_ctls[table]]
+
+                    let (looking_z, looking_z_next) = ctl_zs[total_num_helper_columns + z_index];
+                    let helper_columns = ctl_zs
+                        [start_index..start_index + num_helper_ctl_columns[i]]
                         .iter()
                         .map(|&(h, _)| *h)
                         .collect::<Vec<_>>();
 
-                    start_indices[table] += num_ctls[table];
+                    start_index += num_helper_ctl_columns[i];
+                    z_index += 1;
 
-                    z_indices[table] += 1;
-                    ctl_vars_per_table[table].push(Self {
+                    ctl_vars.push(Self {
                         helper_columns,
                         local_z: *looking_z,
                         next_z: *looking_z_next,
@@ -596,31 +524,33 @@ impl<'a, F: RichField + Extendable<D>, const D: usize>
                     });
                 }
 
-                let (looked_z, looked_z_next) = ctl_zs[looked_table.table]
-                    [total_num_helper_cols_by_table[looked_table.table]
-                        + z_indices[looked_table.table]];
+                if looked_table.table == table_idx {
+                    let (looked_z, looked_z_next) = ctl_zs[total_num_helper_columns + z_index];
+                    z_index += 1;
 
-                z_indices[looked_table.table] += 1;
+                    let columns = vec![&looked_table.columns[..]];
+                    let filter = vec![looked_table.filter.clone()];
 
-                let columns = vec![&looked_table.columns[..]];
-                let filter = vec![looked_table.filter.clone()];
-                ctl_vars_per_table[looked_table.table].push(Self {
-                    helper_columns: vec![],
-                    local_z: *looked_z,
-                    next_z: *looked_z_next,
-                    challenges,
-                    columns,
-                    filter,
-                });
+                    ctl_vars.push(Self {
+                        helper_columns: vec![],
+                        local_z: *looked_z,
+                        next_z: *looked_z_next,
+                        challenges,
+                        columns,
+                        filter,
+                    });
+                }
             }
         }
-        ctl_vars_per_table
+
+        ctl_vars
     }
 }
 
 /// Checks the cross-table lookup Z polynomials for each table:
 /// - Checks that the CTL `Z` partial sums are correctly updated.
 /// - Checks that the final value of the CTL sum is the combination of all STARKs' CTL polynomials.
+///
 /// CTL `Z` partial sums are upside down: the complete sum is on the first row, and
 /// the first term is on the last row. This allows the transition constraint to be:
 /// `combine(w) * (Z(w) - Z(gw)) = filter` where combine is called on the local row
@@ -825,6 +755,7 @@ impl<'a, F: Field, const D: usize> CtlCheckVarsTarget<F, D> {
 /// Circuit version of `eval_cross_table_lookup_checks`. Checks the cross-table lookup Z polynomials for each table:
 /// - Checks that the CTL `Z` partial sums are correctly updated.
 /// - Checks that the final value of the CTL sum is the combination of all STARKs' CTL polynomials.
+///
 /// CTL `Z` partial sums are upside down: the complete sum is on the first row, and
 /// the first term is on the last row. This allows the transition constraint to be:
 /// `combine(w) * (Z(w) - Z(gw)) = filter` where combine is called on the local row
@@ -916,10 +847,11 @@ pub(crate) fn eval_cross_table_lookup_checks_circuit<
 }
 
 /// Verifies all cross-table lookups.
+/// The key of `ctl_extra_looking_sums` is the corresponding CTL's position within `cross_table_lookups`.
 pub fn verify_cross_table_lookups<F: RichField + Extendable<D>, const D: usize, const N: usize>(
     cross_table_lookups: &[CrossTableLookup<F>],
     ctl_zs_first: [Vec<F>; N],
-    ctl_extra_looking_sums: Option<&[Vec<F>]>,
+    ctl_extra_looking_sums: &HashMap<usize, Vec<F>>,
     config: &StarkConfig,
 ) -> Result<()> {
     let mut ctl_zs_openings = ctl_zs_first.iter().map(|v| v.iter()).collect::<Vec<_>>();
@@ -931,6 +863,7 @@ pub fn verify_cross_table_lookups<F: RichField + Extendable<D>, const D: usize, 
         },
     ) in cross_table_lookups.iter().enumerate()
     {
+        let ctl_extra_looking_sum = ctl_extra_looking_sums.get(&index);
         // We want to iterate on each looking table only once.
         let mut filtered_looking_tables = vec![];
         for table in looking_tables {
@@ -946,8 +879,7 @@ pub fn verify_cross_table_lookups<F: RichField + Extendable<D>, const D: usize, 
                 .map(|&table| *ctl_zs_openings[table].next().unwrap())
                 .sum::<F>()
                 // Get elements looking into `looked_table` that are not associated to any STARK.
-                + ctl_extra_looking_sums
-                .map(|v| v[looked_table.table][c]).unwrap_or_default();
+                + ctl_extra_looking_sum.map(|v| v[c]).unwrap_or_default();
 
             // Get the looked table CTL polynomial opening.
             let looked_z = *ctl_zs_openings[looked_table.table].next().unwrap();
@@ -965,6 +897,7 @@ pub fn verify_cross_table_lookups<F: RichField + Extendable<D>, const D: usize, 
 }
 
 /// Circuit version of `verify_cross_table_lookups`. Verifies all cross-table lookups.
+/// The key of `ctl_extra_looking_sums` is the corresponding CTL's position within `cross_table_lookups`.
 pub fn verify_cross_table_lookups_circuit<
     F: RichField + Extendable<D>,
     const D: usize,
@@ -973,15 +906,19 @@ pub fn verify_cross_table_lookups_circuit<
     builder: &mut CircuitBuilder<F, D>,
     cross_table_lookups: Vec<CrossTableLookup<F>>,
     ctl_zs_first: [Vec<Target>; N],
-    ctl_extra_looking_sums: Option<&[Vec<Target>]>,
+    ctl_extra_looking_sums: &HashMap<usize, Vec<Target>>,
     inner_config: &StarkConfig,
 ) {
     let mut ctl_zs_openings = ctl_zs_first.iter().map(|v| v.iter()).collect::<Vec<_>>();
-    for CrossTableLookup {
-        looking_tables,
-        looked_table,
-    } in cross_table_lookups.into_iter()
+    for (
+        index,
+        CrossTableLookup {
+            looking_tables,
+            looked_table,
+        },
+    ) in cross_table_lookups.into_iter().enumerate()
     {
+        let ctl_extra_looking_sum = ctl_extra_looking_sums.get(&index);
         // We want to iterate on each looking table only once.
         let mut filtered_looking_tables = vec![];
         for table in looking_tables {
@@ -998,9 +935,7 @@ pub fn verify_cross_table_lookups_circuit<
             );
 
             // Get elements looking into `looked_table` that are not associated to any STARK.
-            let extra_sum = ctl_extra_looking_sums
-                .map(|v| v[looked_table.table][c])
-                .unwrap_or_default();
+            let extra_sum = ctl_extra_looking_sum.map(|v| v[c]).unwrap_or_default();
             looking_zs_sum = builder.add(looking_zs_sum, extra_sum);
 
             // Get the looked table CTL polynomial opening.
@@ -1029,10 +964,11 @@ pub mod debug_utils {
     type MultiSet<F> = HashMap<Vec<F>, Vec<(TableIdx, usize)>>;
 
     /// Check that the provided traces and cross-table lookups are consistent.
+    /// The key of `extra_looking_values` is the corresponding CTL's position within `cross_table_lookups`.
     pub fn check_ctls<F: Field>(
         trace_poly_values: &[Vec<PolynomialValues<F>>],
         cross_table_lookups: &[CrossTableLookup<F>],
-        extra_looking_values: &HashMap<TableIdx, Vec<Vec<F>>>,
+        extra_looking_values: &HashMap<usize, Vec<Vec<F>>>,
     ) {
         for (i, ctl) in cross_table_lookups.iter().enumerate() {
             check_ctl(trace_poly_values, ctl, i, extra_looking_values.get(&i));
