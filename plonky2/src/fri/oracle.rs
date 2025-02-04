@@ -67,58 +67,11 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Self {
-        // #[cfg(any(not(feature = "cuda"), not(feature = "batch")))]
         let coeffs = timed!(
             timing,
             "IFFT",
             values.into_par_iter().map(|v| v.ifft()).collect::<Vec<_>>()
         );
-
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let degree = values[0].len();
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let log_n = log2_strict(degree);
-
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let num_gpus: usize = std::env::var("NUM_OF_GPUS")
-        //     .expect("NUM_OF_GPUS should be set")
-        //     .parse()
-        //     .unwrap();
-        // // let num_gpus = 1;
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let total_num_of_fft = values.len();
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let per_device_batch = total_num_of_fft.div_ceil(num_gpus);
-
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let chunk_size = total_num_of_fft.div_ceil(num_gpus);
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // println!(
-        //     "invoking intt_batch, total_nums: {:?}, log_n: {:?}, num_gpus: {:?}",
-        //     total_num_of_fft, log_n, num_gpus
-        // );
-
-        // #[cfg(all(feature = "cuda", feature = "batch"))]
-        // let coeffs = timed!(
-        //     timing,
-        //     "IFFT",
-        //     values
-        //         .par_chunks(chunk_size)
-        //         .enumerate()
-        //         .flat_map(|(id, poly_chunk)| {
-        //             let mut polys_values: Vec<F> =
-        //                 poly_chunk.iter().flat_map(|p| p.values.clone()).collect();
-        //             let mut ntt_cfg = NTTConfig::default();
-        //             ntt_cfg.batches = per_device_batch as u32;
-
-        //             intt_batch(id, polys_values.as_mut_ptr(), log_n, ntt_cfg);
-        //             polys_values
-        //                 .chunks(1 << log_n)
-        //                 .map(|buffer| PolynomialCoeffs::new(buffer.to_vec()))
-        //                 .collect::<Vec<PolynomialCoeffs<F>>>()
-        //         })
-        //         .collect()
-        // );
 
         Self::from_coeffs(
             coeffs,
@@ -140,7 +93,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Self {
         let degree = polynomials[0].len();
-
         let lde_values = timed!(
             timing,
             "FFT + blinding",
@@ -165,22 +117,31 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
     }
 
     #[cfg(not(feature = "cuda"))]
-    pub(crate) fn from_coeffs(
-        polynomials: Vec<PolynomialCoeffs<F>>,
+    pub(crate) fn lde_values(
+        polynomials: &[PolynomialCoeffs<F>],
         rate_bits: usize,
         blinding: bool,
-        cap_height: usize,
-        timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
-    ) -> Self {
-        Self::from_coeffs_cpu(
-            polynomials,
-            rate_bits,
-            blinding,
-            cap_height,
-            timing,
-            fft_root_table,
-        )
+    ) -> Vec<Vec<F>> {
+        let degree = polynomials[0].len();
+
+        // If blinding, salt with two random elements to each leaf vector.
+        let salt_size = if blinding { SALT_SIZE } else { 0 };
+
+        polynomials
+            .par_iter()
+            .map(|p| {
+                assert_eq!(p.len(), degree, "Polynomial degrees inconsistent");
+                p.lde(rate_bits)
+                    .coset_fft_with_options(F::coset_shift(), Some(rate_bits), fft_root_table)
+                    .values
+            })
+            .chain(
+                (0..salt_size)
+                    .into_par_iter()
+                    .map(|_| F::rand_vec(degree << rate_bits)),
+            )
+            .collect()
     }
 
     #[cfg(feature = "cuda")]
