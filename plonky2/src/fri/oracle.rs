@@ -27,6 +27,22 @@ use crate::util::reducing::ReducingFactor;
 use crate::util::timing::TimingTree;
 use crate::util::{log2_strict, reverse_bits, reverse_index_bits_in_place, transpose};
 
+#[cfg(all(feature = "cuda", any(test, doctest)))]
+pub static GPU_INIT: once_cell::sync::Lazy<std::sync::Arc<std::sync::Mutex<u64>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Arc::new(std::sync::Mutex::new(0)));
+
+#[cfg(all(feature = "cuda", any(test, doctest)))]
+fn init_gpu() {
+    use zeknox::init_cuda_rs;
+
+    let mut init = GPU_INIT.lock().unwrap();
+    if *init == 0 {
+        println!("Init GPU!");
+        init_cuda_rs();
+        *init = 1;
+    }
+}
+
 /// Four (~64 bit) field elements gives ~128 bit security.
 pub const SALT_SIZE: usize = 4;
 
@@ -73,6 +89,9 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             values.into_par_iter().map(|v| v.ifft()).collect::<Vec<_>>()
         );
 
+        #[cfg(all(feature = "cuda", any(test, doctest)))]
+        init_gpu();
+
         Self::from_coeffs(
             coeffs,
             rate_bits,
@@ -81,6 +100,19 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             timing,
             fft_root_table,
         )
+    }
+
+
+    #[cfg(not(feature = "cuda"))]
+    pub fn from_coeffs(
+        polynomials: Vec<PolynomialCoeffs<F>>,
+        rate_bits: usize,
+        blinding: bool,
+        cap_height: usize,
+        timing: &mut TimingTree,
+        fft_root_table: Option<&FftRootTable<F>>,
+    ) -> Self {
+        Self::from_coeffs_cpu(polynomials, rate_bits, blinding, cap_height, timing, fft_root_table)
     }
 
     /// Creates a list polynomial commitment for the polynomials `polynomials`.
@@ -96,7 +128,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let lde_values = timed!(
             timing,
             "FFT + blinding",
-            Self::lde_values(&polynomials, rate_bits, blinding, fft_root_table)
+            Self::lde_values_cpu(&polynomials, rate_bits, blinding, fft_root_table)
         );
 
         let mut leaves = timed!(timing, "transpose LDEs", transpose(&lde_values));
@@ -118,6 +150,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
     #[cfg(not(feature = "cuda"))]
     pub(crate) fn lde_values(
+        polynomials: &[PolynomialCoeffs<F>],
+        rate_bits: usize,
+        blinding: bool,
+        fft_root_table: Option<&FftRootTable<F>>,
+    ) -> Vec<Vec<F>> {
+        Self::lde_values_cpu(polynomials, rate_bits, blinding, fft_root_table)
+    }
+
+    pub(crate) fn lde_values_cpu(
         polynomials: &[PolynomialCoeffs<F>],
         rate_bits: usize,
         blinding: bool,
@@ -153,6 +194,9 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Self {
+        #[cfg(any(test, doctest))]
+        init_gpu();
+
         let pols = polynomials.len();
         let degree = polynomials[0].len();
         let log_n = log2_strict(degree);
@@ -302,34 +346,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         mt
     }
 
-    #[allow(dead_code)]
-    fn lde_values_cpu(
-        polynomials: &[PolynomialCoeffs<F>],
-        rate_bits: usize,
-        blinding: bool,
-        fft_root_table: Option<&FftRootTable<F>>,
-    ) -> Vec<Vec<F>> {
-        let degree = polynomials[0].len();
-
-        // If blinding, salt with two random elements to each leaf vector.
-        let salt_size = if blinding { SALT_SIZE } else { 0 };
-
-        polynomials
-            .par_iter()
-            .map(|p| {
-                assert_eq!(p.len(), degree, "Polynomial degrees inconsistent");
-                p.lde(rate_bits)
-                    .coset_fft_with_options(F::coset_shift(), Some(rate_bits), fft_root_table)
-                    .values
-            })
-            .chain(
-                (0..salt_size)
-                    .into_par_iter()
-                    .map(|_| F::rand_vec(degree << rate_bits)),
-            )
-            .collect()
-    }
-
+    #[cfg(all(feature = "cuda"))]
     #[allow(dead_code)]
     pub(crate) fn lde_values(
         polynomials: &[PolynomialCoeffs<F>],
@@ -337,32 +354,33 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         blinding: bool,
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Vec<Vec<F>> {
+        #[cfg(any(test, doctest))]
+        init_gpu();
+
         let degree = polynomials[0].len();
-        #[cfg(all(feature = "cuda", feature = "batch"))]
         let log_n = log2_strict(degree) + rate_bits;
 
         // If blinding, salt with two random elements to each leaf vector.
         let salt_size = if blinding { SALT_SIZE } else { 0 };
         // println!("salt_size: {:?}", salt_size);
 
-        #[cfg(all(feature = "cuda", feature = "batch"))]
         let num_gpus: usize = std::env::var("NUM_OF_GPUS")
             .expect("NUM_OF_GPUS should be set")
             .parse()
             .unwrap();
         // let num_gpus: usize = 1;
-        #[cfg(all(feature = "cuda", feature = "batch"))]
+
         println!("get num of gpus: {:?}", num_gpus);
-        #[cfg(all(feature = "cuda", feature = "batch"))]
+
         let total_num_of_fft = polynomials.len();
         // println!("total_num_of_fft: {:?}", total_num_of_fft);
-        #[cfg(all(feature = "cuda", feature = "batch"))]
+
         let per_device_batch = total_num_of_fft.div_ceil(num_gpus);
 
-        #[cfg(all(feature = "cuda", feature = "batch"))]
+
         let chunk_size = total_num_of_fft.div_ceil(num_gpus);
 
-        #[cfg(all(feature = "cuda", feature = "batch"))]
+
         if log_n > 10 && polynomials.len() > 0 {
             println!("log_n: {:?}", log_n);
             let start_lde = std::time::Instant::now();

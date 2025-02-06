@@ -208,14 +208,14 @@ mod tests {
             H::hash_or_noop(&[F::TWO, F::TWO]),
             H::hash_or_noop(&[F::ZERO, F::ZERO]),
         ];
-        assert_eq!(mat_1_leaf_hashes[0..2], fmt.digests[0..2]);
+        assert_eq!(mat_1_leaf_hashes[0..2], fmt.digests[2..4]);
         assert_eq!(mat_1_leaf_hashes[2..4], fmt.digests[4..6]);
 
         let layer_1 = [
             H::two_to_one(mat_1_leaf_hashes[0], mat_1_leaf_hashes[1]),
             H::two_to_one(mat_1_leaf_hashes[2], mat_1_leaf_hashes[3]),
         ];
-        assert_eq!(layer_1, fmt.digests[2..4]);
+        assert_eq!(layer_1, fmt.digests[0..2]);
 
         let root = H::two_to_one(layer_1[0], layer_1[1]);
         assert_eq!(fmt.cap.flatten(), root.to_vec());

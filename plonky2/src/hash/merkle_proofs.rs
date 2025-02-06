@@ -363,7 +363,7 @@ mod tests {
         let data = builder.add_virtual_targets(tree.leaf_size);
         let leaf = tree.get(i);
         for j in 0..data.len() {
-            pw.set_target(data[j], leaf[j]);
+            let _ = pw.set_target(data[j], leaf[j]);
         }
 
         builder.verify_merkle_proof_to_cap::<<C as GenericConfig<D>>::InnerHasher>(
