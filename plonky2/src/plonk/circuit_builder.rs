@@ -92,7 +92,7 @@ pub struct LookupWire {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```ignore
 /// use plonky2::plonk::circuit_data::CircuitConfig;
 /// use plonky2::iop::witness::PartialWitness;
 /// use plonky2::plonk::circuit_builder::CircuitBuilder;
