@@ -9,6 +9,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use num::range;
+#[cfg(feature = "cuda")]
+use once_cell::sync::Lazy;
+use plonky2_maybe_rayon::*;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "cuda")]
 use zeknox::device::memory::HostOrDeviceSlice;
 #[cfg(feature = "cuda")]
@@ -17,11 +22,6 @@ use zeknox::device::stream::CudaStream;
 use zeknox::{
     fill_digests_buf_linear_gpu_with_gpu_ptr, fill_digests_buf_linear_multigpu_with_gpu_ptr,
 };
-use num::range;
-#[cfg(feature = "cuda")]
-use once_cell::sync::Lazy;
-use plonky2_maybe_rayon::*;
-use serde::{Deserialize, Serialize};
 
 use crate::hash::hash_types::RichField;
 #[cfg(feature = "cuda")]
@@ -472,36 +472,29 @@ pub(crate) fn merkle_tree_prove<F: RichField, H: Hasher<F>>(
     digests: &[H::Hash],
 ) -> Vec<H::Hash> {
     let num_layers = log2_strict(leaves_len) - cap_height;
-    debug_assert_eq!(leaf_index >> (cap_height + num_layers), 0);
+    let subtree_digest_size = (1 << (num_layers + 1)) - 2; // 2 ^ (k+1) - 2
+    let subtree_idx = leaf_index / (1 << num_layers);
 
-    let digest_len = 2 * (leaves_len - (1 << cap_height));
-    assert_eq!(digest_len, digests.len());
+    let siblings: Vec<<H as Hasher<F>>::Hash> = Vec::with_capacity(num_layers);
+    if num_layers == 0 {
+        return siblings;
+    }
 
-    let digest_tree: &[H::Hash] = {
-        let tree_index = leaf_index >> num_layers;
-        let tree_len = digest_len >> cap_height;
-        &digests[tree_len * tree_index..tree_len * (tree_index + 1)]
-    };
+    // digests index where we start
+    let idx = subtree_digest_size - (1 << num_layers) + (leaf_index % (1 << num_layers));
 
-    // Mask out high bits to get the index within the sub-tree.
-    let mut pair_index = leaf_index & ((1 << num_layers) - 1);
     (0..num_layers)
         .map(|i| {
-            let parity = pair_index & 1;
-            pair_index >>= 1;
-
-            // The layers' data is interleaved as follows:
-            // [layer 0, layer 1, layer 0, layer 2, layer 0, layer 1, layer 0, layer 3, ...].
-            // Each of the above is a pair of siblings.
-            // `pair_index` is the index of the pair within layer `i`.
-            // The index of that the pair within `digests` is
-            // `pair_index * 2 ** (i + 1) + (2 ** i - 1)`.
-            let siblings_index = (pair_index << (i + 1)) + (1 << i) - 1;
-            // We have an index for the _pair_, but we want the index of the _sibling_.
-            // Double the pair index to get the index of the left sibling. Conditionally add `1`
-            // if we are to retrieve the right sibling.
-            let sibling_index = 2 * siblings_index + (1 - parity);
-            digest_tree[sibling_index]
+            // relative index
+            let rel_idx = (idx + 2 - (1 << i + 1)) / (1 << i);
+            // absolute index
+            let mut abs_idx = subtree_idx * subtree_digest_size + rel_idx;
+            if (rel_idx & 1) == 1 {
+                abs_idx -= 1;
+            } else {
+                abs_idx += 1;
+            }
+            digests[abs_idx]
         })
         .collect()
 }
@@ -602,6 +595,15 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             log2_leaves_len
         );
 
+        let num_digests = 2 * (leaves_len - (1 << cap_height));
+        let mut digests = Vec::with_capacity(num_digests);
+
+        let len_cap = 1 << cap_height;
+        let mut cap = Vec::with_capacity(len_cap);
+
+        let digests_buf = capacity_up_to_mut(&mut digests, num_digests);
+        let cap_buf = capacity_up_to_mut(&mut cap, len_cap);
+
         // copy data from GPU in async mode
         let mut host_leaves: Vec<F> = vec![F::ZERO; leaves_len * leaf_len];
         let stream_copy = CudaStream::create().unwrap();
@@ -612,26 +614,29 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             .expect("copy to host error");
         print_time(start, "copy leaves from GPU async");
 
-        let num_digests = 2 * (leaves_len - (1 << cap_height));
-        let mut digests = Vec::with_capacity(num_digests);
+        // if hash is Keccak or the leaf is too small, do it on CPU
+        if leaf_len <= H::HASH_SIZE / 8 || H::HASHER_TYPE == HasherType::Keccak {
+            let _ = stream_copy.synchronize();
+            let _ = stream_copy.destroy();
+            fill_digests_buf::<F, H>(digests_buf, cap_buf, &host_leaves, leaf_len, cap_height);
+        } else {
+            // do iton GPU
+            let now = Instant::now();
+            let gpu_id = 0;
+            fill_digests_buf_gpu_ptr::<F, H>(
+                digests_buf,
+                cap_buf,
+                leaves_gpu_ptr.as_ptr(),
+                leaves_len,
+                leaf_len,
+                cap_height,
+                gpu_id,
+            );
+            print_time(now, "fill digests buffer");
 
-        let len_cap = 1 << cap_height;
-        let mut cap = Vec::with_capacity(len_cap);
-
-        let digests_buf = capacity_up_to_mut(&mut digests, num_digests);
-        let cap_buf = capacity_up_to_mut(&mut cap, len_cap);
-        let now = Instant::now();
-        let gpu_id = 0;
-        fill_digests_buf_gpu_ptr::<F, H>(
-            digests_buf,
-            cap_buf,
-            leaves_gpu_ptr.as_ptr(),
-            leaves_len,
-            leaf_len,
-            cap_height,
-            gpu_id,
-        );
-        print_time(now, "fill digests buffer");
+            let _ = stream_copy.synchronize();
+            let _ = stream_copy.destroy();
+        }
 
         unsafe {
             // SAFETY: `fill_digests_buf` and `cap` initialized the spare capacity up to
@@ -639,18 +644,6 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             digests.set_len(num_digests);
             cap.set_len(len_cap);
         }
-        /*
-        println!{"Digest Buffer"};
-        for dg in &digests {
-            println!("{:?}", dg);
-        }
-        println!{"Cap Buffer"};
-        for dg in &cap {
-            println!("{:?}", dg);
-        }
-        */
-        let _ = stream_copy.synchronize();
-        let _ = stream_copy.destroy();
 
         Self {
             leaves: host_leaves,
@@ -856,8 +849,9 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
     /// Create a Merkle proof from a leaf index.
     pub fn prove(&self, leaf_index: usize) -> MerkleProof<F, H> {
         let cap_height = log2_strict(self.cap.len());
+        let leaves_count = self.leaves.len() / self.leaf_size;
         let siblings =
-            merkle_tree_prove::<F, H>(leaf_index, self.leaves.len(), cap_height, &self.digests);
+            merkle_tree_prove::<F, H>(leaf_index, leaves_count, cap_height, &self.digests);
 
         MerkleProof { siblings }
     }
