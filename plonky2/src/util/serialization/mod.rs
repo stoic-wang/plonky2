@@ -1013,8 +1013,10 @@ pub trait Read {
         C: GenericConfig<D, F = F>,
     {
         let proof = self.read_proof(common_data)?;
-        let pi_len = self.read_usize()?;
-        let public_inputs = self.read_field_vec(pi_len)?;
+        // NOTE: circom_compatability
+        // vector length is not read but taken from the common data
+        // let pi_len = self.read_usize()?;
+        let public_inputs = self.read_field_vec(common_data.num_public_inputs)?;
         Ok(ProofWithPublicInputs {
             proof,
             public_inputs,
