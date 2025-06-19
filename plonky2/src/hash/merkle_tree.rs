@@ -45,9 +45,6 @@ fn print_time(now: Instant, msg: &str) {
 #[cfg(not(feature = "cuda_timing"))]
 fn print_time(_now: Instant, _msg: &str) {}
 
-#[cfg(feature = "cuda")]
-const FORCE_SINGLE_GPU: bool = true;
-
 /// The Merkle cap of height `h` of a Merkle tree is the `h`-th layer (from the root) of the tree.
 /// It can be used in place of the root to verify Merkle paths, which are `h` elements shorter.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -476,7 +473,11 @@ fn fill_digests_buf_gpu_ptr<F: RichField, H: Hasher<F>>(
             .expect("NUM_OF_GPUS should be set")
             .parse()
             .unwrap();
-        if !FORCE_SINGLE_GPU
+        let force_single_gpu: bool = std::env::var("FORCE_SINGLE_GPU")
+            .unwrap_or("false".to_string())
+            .parse()
+            .unwrap();
+        if !force_single_gpu
             && leaves_count >= (1 << 12)
             && cap_height > 0
             && num_gpus > 1
@@ -706,6 +707,7 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
 
     #[cfg(feature = "cuda")]
     pub fn new_from_gpu_leaves(
+        gpu_id: usize,
         leaves_gpu_ptr: &HostOrDeviceSlice<'_, F>,
         leaves_len: usize,
         leaf_len: usize,
@@ -748,7 +750,6 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
         let digests_buf = capacity_up_to_mut(&mut digests, num_digests);
         let cap_buf = capacity_up_to_mut(&mut cap, len_cap);
         let now = Instant::now();
-        let gpu_id = 0;
         fill_digests_buf_gpu_ptr::<F, H>(
             digests_buf,
             cap_buf,
@@ -756,7 +757,7 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             leaves_len,
             leaf_len,
             cap_height,
-            gpu_id,
+            gpu_id as u64,
         );
         print_time(now, "fill digests buffer");
 
@@ -1370,7 +1371,7 @@ mod tests {
             .copy_from_host(leaves_1d.as_slice())
             .expect("copy data to gpu");
 
-        MerkleTree::<F, <C as GenericConfig<D>>::Hasher>::new_from_gpu_leaves(&gpu_data, n, 7, 1);
+        MerkleTree::<F, <C as GenericConfig<D>>::Hasher>::new_from_gpu_leaves(0, &gpu_data, n, 7, 1);
 
         Ok(())
     }
