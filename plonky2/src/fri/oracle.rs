@@ -1,7 +1,13 @@
+#[cfg(feature = "cuda")]
+use alloc::sync::Arc;
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec::Vec};
+#[cfg(feature = "cuda")]
+use std::sync::Mutex;
 
 use itertools::Itertools;
+#[cfg(feature = "cuda")]
+use once_cell::sync::Lazy;
 use plonky2_field::types::Field;
 use plonky2_maybe_rayon::*;
 #[cfg(feature = "cuda")]
@@ -9,12 +15,6 @@ use zeknox::{
     device::memory::HostOrDeviceSlice, lde_batch, lde_batch_multi_gpu, transpose_rev_batch,
     types::*,
 };
-#[cfg(feature = "cuda")]
-use once_cell::sync::Lazy;
-#[cfg(feature = "cuda")]
-use alloc::sync::Arc;
-#[cfg(feature = "cuda")]
-use std::sync::Mutex;
 #[cfg(feature = "cuda")]
 pub static GPU_ID: Lazy<Arc<Mutex<usize>>> = Lazy::new(|| Arc::new(Mutex::new(0)));
 
@@ -308,23 +308,9 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         cfg_lde.is_multi_gpu = true;
         cfg_lde.salt_size = salt_size as u32;
 
-        let mut device_output_data: HostOrDeviceSlice<'_, F> =
-            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
-
+        let mut multi_gpu = false;
         let mut gpu_id = 0;
-        if num_gpus == 1 {
-            let _ = timed!(
-                timing,
-                "LDE on 1 GPU",
-                lde_batch(
-                    gpu_id,
-                    device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
-                    log_n,
-                    cfg_lde.clone()
-                )
-            );
-        } else {
+        if num_gpus > 1 {
             if force_single_gpu {
                 println!("FORCE_SINGLE_GPU is set, using single GPU for LDE.");
                 let mut gpu_id_lock = GPU_ID.lock().unwrap();
@@ -333,20 +319,18 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 if *gpu_id_lock >= num_gpus {
                     *gpu_id_lock = 0;
                 }
-                let _ = timed!(
-                timing,
-                "LDE on 1 GPU",
-                lde_batch(
-                    gpu_id,
-                    device_output_data.as_mut_ptr(),
-                    gpu_input.as_mut_ptr(),
-                    log_n,
-                    cfg_lde.clone()
-                )
-            );
             } else {
                 println!("Using multi GPU for LDE.");
-                let _ = timed!(
+                multi_gpu = true;
+            }
+        }
+
+        let mut device_output_data: HostOrDeviceSlice<'_, F> =
+            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+
+        if multi_gpu {
+            println!("Using multi GPU for LDE.");
+            let _ = timed!(
                 timing,
                 "LDE on multi GPU",
                 lde_batch_multi_gpu::<F>(
@@ -359,7 +343,18 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                     total_num_output_elements,
                 )
             );
-            }
+        } else {
+            let _ = timed!(
+                timing,
+                "LDE on 1 GPU",
+                lde_batch(
+                    gpu_id,
+                    device_output_data.as_mut_ptr(),
+                    gpu_input.as_mut_ptr(),
+                    log_n,
+                    cfg_lde.clone()
+                )
+            );
         }
 
         let mut cfg_trans = TransposeConfig::default();
@@ -368,7 +363,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         cfg_trans.are_outputs_on_device = true;
 
         let mut device_transpose_data: HostOrDeviceSlice<'_, F> =
-            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+            HostOrDeviceSlice::cuda_malloc(gpu_id as i32, total_num_output_elements).unwrap();
 
         let _ = timed!(
             timing,
