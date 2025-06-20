@@ -607,7 +607,10 @@ fn fill_digests_buf_meta<F: RichField, H: Hasher<F>>(
     fill_digests_buf::<F, H>(digests_buf, cap_buf, leaves, leaf_size, cap_height);
 }
 
-#[cfg(all(target_feature = "avx2", target_feature = "avx512dq"))]
+#[cfg(all(
+    not(feature = "cuda"),
+    all(target_feature = "avx2", target_feature = "avx512dq")
+))]
 fn fill_digests_buf_meta<F: RichField, H: Hasher<F>>(
     digests_buf: &mut [MaybeUninit<H::Hash>],
     cap_buf: &mut [MaybeUninit<H::Hash>],
