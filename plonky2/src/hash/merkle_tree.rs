@@ -483,7 +483,7 @@ fn fill_digests_buf_gpu_ptr<F: RichField, H: Hasher<F>>(
             && num_gpus > 1
             && H::HASHER_TYPE == HasherType::PoseidonBN128
         {
-            // println!("Multi GPU");
+            // println!("fill_digests_buf_gpu_ptr(): Multi GPU");
             fill_digests_buf_linear_multigpu_with_gpu_ptr(
                 gpu_digests_buf.as_mut_ptr() as *mut core::ffi::c_void,
                 gpu_cap_buf.as_mut_ptr() as *mut core::ffi::c_void,
@@ -494,9 +494,10 @@ fn fill_digests_buf_gpu_ptr<F: RichField, H: Hasher<F>>(
                 leaf_size,
                 cap_height,
                 H::HASHER_TYPE as u64,
+                gpu_id,
             );
         } else {
-            // println!("Single GPU");
+            // println!("fill_digests_buf_gpu_ptr(): Single GPU");
             fill_digests_buf_linear_gpu_with_gpu_ptr(
                 gpu_digests_buf.as_mut_ptr() as *mut core::ffi::c_void,
                 gpu_cap_buf.as_mut_ptr() as *mut core::ffi::c_void,
@@ -1365,13 +1366,26 @@ mod tests {
         let leaves = random_data_2d::<F>(n, 7);
         let leaves_1d: Vec<F> = leaves.into_iter().flatten().collect();
 
-        let mut gpu_data: HostOrDeviceSlice<'_, F> =
-            HostOrDeviceSlice::cuda_malloc(0, n * 7).unwrap();
-        gpu_data
-            .copy_from_host(leaves_1d.as_slice())
-            .expect("copy data to gpu");
+        let num_gpus: usize = std::env::var("NUM_OF_GPUS")
+            .expect("NUM_OF_GPUS should be set")
+            .parse()
+            .unwrap();
 
-        MerkleTree::<F, <C as GenericConfig<D>>::Hasher>::new_from_gpu_leaves(0, &gpu_data, n, 7, 1);
+        for gpu_id in 0..num_gpus {
+            let mut gpu_data: HostOrDeviceSlice<'_, F> =
+                HostOrDeviceSlice::cuda_malloc(gpu_id as i32, n * 7).unwrap();
+            gpu_data
+                .copy_from_host(leaves_1d.as_slice())
+                .expect("copy data to gpu");
+
+            MerkleTree::<F, <C as GenericConfig<D>>::Hasher>::new_from_gpu_leaves(
+                gpu_id as usize,
+                &gpu_data,
+                n,
+                7,
+                1,
+            );
+        }
 
         Ok(())
     }

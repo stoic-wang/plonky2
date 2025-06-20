@@ -312,21 +312,21 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let mut gpu_id = 0;
         if num_gpus > 1 {
             if force_single_gpu {
-                println!("FORCE_SINGLE_GPU is set, using single GPU for LDE.");
                 let mut gpu_id_lock = GPU_ID.lock().unwrap();
                 gpu_id = *gpu_id_lock;
                 *gpu_id_lock += 1;
                 if *gpu_id_lock >= num_gpus {
                     *gpu_id_lock = 0;
                 }
+                // println!("FORCE_SINGLE_GPU is set, using single GPU {} for LDE.", gpu_id);
             } else {
-                println!("Using multi GPU for LDE.");
+                // println!("Using multi GPU for LDE.");
                 multi_gpu = true;
             }
         }
 
         let mut device_output_data: HostOrDeviceSlice<'_, F> =
-            HostOrDeviceSlice::cuda_malloc(0 as i32, total_num_output_elements).unwrap();
+            HostOrDeviceSlice::cuda_malloc(gpu_id as i32, total_num_output_elements).unwrap();
 
         if multi_gpu {
             println!("Using multi GPU for LDE.");
