@@ -5,7 +5,7 @@
 #![deny(missing_debug_implementations)]
 #![feature(specialization)]
 #![cfg_attr(not(test), no_std)]
-#![cfg(not(test))]
+// Note: Removed erroneous #![cfg(not(test))] which was disabling entire crate during tests
 extern crate alloc;
 
 pub(crate) mod arch;
