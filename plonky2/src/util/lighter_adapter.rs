@@ -3,18 +3,34 @@
 //! This module provides functionality to load circuit data from the JSON format
 //! used by lighter-prover into okx/plonky2's internal representation.
 
-#[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use core::ops::Range;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::field::goldilocks_field::GoldilocksField;
+use crate::field::types::Field;
 use crate::fri::reduction_strategies::FriReductionStrategy;
-use crate::fri::FriConfig;
-use crate::plonk::circuit_data::CircuitConfig;
+use crate::fri::{FriConfig, FriParams};
+use crate::gates::arithmetic_base::ArithmeticGate;
+use crate::gates::arithmetic_extension::ArithmeticExtensionGate;
+use crate::gates::base_sum::BaseSumGate;
+use crate::gates::coset_interpolation::CosetInterpolationGate;
+use crate::gates::exponentiation::ExponentiationGate;
+use crate::gates::gate::GateRef;
+use crate::gates::multiplication_extension::MulExtensionGate;
+use crate::gates::noop::NoopGate;
+use crate::gates::poseidon::PoseidonGate;
+use crate::gates::poseidon_mds::PoseidonMdsGate;
+use crate::gates::public_input::PublicInputGate;
+use crate::gates::random_access::RandomAccessGate;
+use crate::gates::reducing::ReducingGate;
+use crate::gates::reducing_extension::ReducingExtensionGate;
+use crate::gates::selectors::SelectorsInfo;
+use crate::plonk::circuit_data::{CircuitConfig, CommonCircuitData};
 
 /// FRI configuration from lighter JSON format.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,12 +131,6 @@ pub fn load_lighter_verifier_only_data<P: AsRef<Path>>(
 }
 
 /// Parse a gate string from lighter format to extract gate type and parameters.
-///
-/// Gate strings are in Rust debug format, e.g.:
-/// - "NoopGate"
-/// - "ArithmeticGate { num_ops: 20 }"
-/// - "PoseidonMdsGate(PhantomData<...>)<WIDTH=12>"
-/// - "BaseSumGate { num_limbs: 63 } + Base: 2"
 #[derive(Clone, Debug)]
 pub struct ParsedGate {
     /// The base gate type name.
@@ -130,6 +140,7 @@ pub struct ParsedGate {
 }
 
 /// Parse a lighter gate string into its components.
+/// Handles nested structures like arrays in barycentric_weights.
 pub fn parse_gate_string(gate_str: &str) -> ParsedGate {
     // Extract base gate type (everything before '{', '(', '<', or ' + ')
     let gate_type = gate_str
@@ -141,24 +152,15 @@ pub fn parse_gate_string(gate_str: &str) -> ParsedGate {
 
     let mut params = Vec::new();
 
-    // Extract parameters from { key: value } blocks
-    if let Some(start) = gate_str.find('{') {
-        if let Some(end) = gate_str.find('}') {
-            let param_str = &gate_str[start + 1..end];
-            for part in param_str.split(',') {
-                let part = part.trim();
-                if let Some(colon_pos) = part.find(':') {
-                    let key = part[..colon_pos].trim().to_string();
-                    let value = part[colon_pos + 1..].trim().to_string();
-                    params.push((key, value));
-                }
-            }
+    // Extract parameters from { key: value, ... } blocks with proper nesting handling
+    if let Some(brace_start) = gate_str.find('{') {
+        if let Some(brace_end) = find_matching_brace(gate_str, brace_start) {
+            let param_str = &gate_str[brace_start + 1..brace_end];
+            parse_params_with_nesting(param_str, &mut params);
         }
     }
 
-    // Extract parameters from trailing <KEY=VALUE> blocks (after last '>')
-    // This handles cases like "Gate(PhantomData<...>)<WIDTH=12>"
-    // We want to find the trailing <...> block, not the PhantomData<...> block
+    // Extract parameters from trailing <KEY=VALUE> blocks
     let chars: Vec<char> = gate_str.chars().collect();
     let mut depth = 0;
     let mut last_open = None;
@@ -178,9 +180,7 @@ pub fn parse_gate_string(gate_str: &str) -> ParsedGate {
         }
     }
 
-    // If there's a trailing <...> block at the end of the string
     if let (Some(start), Some(end)) = (last_open, last_close) {
-        // Check if this is truly at the end (allow trailing whitespace)
         let remaining = &gate_str[end + 1..].trim();
         if remaining.is_empty() || remaining.starts_with('+') {
             let angle_content = &gate_str[start + 1..end];
@@ -204,15 +204,71 @@ pub fn parse_gate_string(gate_str: &str) -> ParsedGate {
     ParsedGate { gate_type, params }
 }
 
+/// Find the matching closing brace for an opening brace at the given position.
+fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut depth = 0;
+    for (i, &c) in chars.iter().enumerate().skip(start) {
+        match c {
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse parameters handling nested structures (arrays, sub-objects).
+fn parse_params_with_nesting(param_str: &str, params: &mut Vec<(String, String)>) {
+    let chars: Vec<char> = param_str.chars().collect();
+    let mut depth = 0;
+    let mut current_start = 0;
+
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                let part: String = chars[current_start..i].iter().collect();
+                parse_single_param(part.trim(), params);
+                current_start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    // Handle last parameter
+    let part: String = chars[current_start..].iter().collect();
+    if !part.trim().is_empty() {
+        parse_single_param(part.trim(), params);
+    }
+}
+
+/// Parse a single key: value parameter.
+fn parse_single_param(part: &str, params: &mut Vec<(String, String)>) {
+    if let Some(colon_pos) = part.find(':') {
+        let key = part[..colon_pos].trim().to_string();
+        let value = part[colon_pos + 1..].trim().to_string();
+        params.push((key, value));
+    }
+}
+
+/// Get a parameter value by key.
+fn get_param(params: &[(String, String)], key: &str) -> Option<String> {
+    params.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+}
+
 /// Convert lighter FRI config to okx FriConfig.
 pub fn convert_fri_config(lighter: &LighterFriConfig) -> FriConfig {
     let reduction_strategy = match &lighter.reduction_strategy {
         LighterReductionStrategy::ConstantArityBits(bits) => {
             FriReductionStrategy::ConstantArityBits(bits[0], bits.get(1).copied().unwrap_or(bits[0]))
         }
-        LighterReductionStrategy::MinSize(min_size) => {
-            FriReductionStrategy::MinSize(*min_size)
-        }
+        LighterReductionStrategy::MinSize(min_size) => FriReductionStrategy::MinSize(*min_size),
     };
 
     FriConfig {
@@ -221,6 +277,16 @@ pub fn convert_fri_config(lighter: &LighterFriConfig) -> FriConfig {
         proof_of_work_bits: lighter.proof_of_work_bits,
         reduction_strategy,
         num_query_rounds: lighter.num_query_rounds,
+    }
+}
+
+/// Convert lighter FRI params to okx FriParams.
+pub fn convert_fri_params(lighter: &LighterFriParams) -> FriParams {
+    FriParams {
+        config: convert_fri_config(&lighter.config),
+        hiding: lighter.hiding,
+        degree_bits: lighter.degree_bits,
+        reduction_arity_bits: lighter.reduction_arity_bits.clone(),
     }
 }
 
@@ -239,6 +305,167 @@ pub fn convert_circuit_config(lighter: &LighterCircuitConfig) -> CircuitConfig {
     }
 }
 
+/// Convert lighter selectors info to okx SelectorsInfo.
+pub fn convert_selectors_info(lighter: &LighterSelectorsInfo) -> SelectorsInfo {
+    SelectorsInfo {
+        selector_indices: lighter.selector_indices.clone(),
+        groups: lighter
+            .groups
+            .iter()
+            .map(|g| Range {
+                start: g.start,
+                end: g.end,
+            })
+            .collect(),
+    }
+}
+
+/// Convert a gate string to a GateRef for GoldilocksField with D=2.
+pub fn convert_gate_string_to_ref(
+    gate_str: &str,
+    config: &CircuitConfig,
+) -> Result<GateRef<GoldilocksField, 2>> {
+    let parsed = parse_gate_string(gate_str);
+    convert_parsed_gate_to_ref(&parsed, config)
+}
+
+/// Convert a parsed gate to a GateRef for GoldilocksField with D=2.
+pub fn convert_parsed_gate_to_ref(
+    parsed: &ParsedGate,
+    config: &CircuitConfig,
+) -> Result<GateRef<GoldilocksField, 2>> {
+    match parsed.gate_type.as_str() {
+        "NoopGate" => Ok(GateRef::new(NoopGate)),
+
+        "PublicInputGate" => Ok(GateRef::new(PublicInputGate)),
+
+        "PoseidonGate" => Ok(GateRef::new(PoseidonGate::new())),
+
+        "PoseidonMdsGate" => Ok(GateRef::new(PoseidonMdsGate::new())),
+
+        "ArithmeticGate" => {
+            let num_ops = get_param(&parsed.params, "num_ops")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| ArithmeticGate::new_from_config(config).num_ops);
+            Ok(GateRef::new(ArithmeticGate { num_ops }))
+        }
+
+        "ArithmeticExtensionGate" => {
+            let num_ops = get_param(&parsed.params, "num_ops")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| ArithmeticExtensionGate::<2>::new_from_config(config).num_ops);
+            Ok(GateRef::new(ArithmeticExtensionGate::<2> { num_ops }))
+        }
+
+        "MulExtensionGate" => {
+            let num_ops = get_param(&parsed.params, "num_ops")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| MulExtensionGate::<2>::new_from_config(config).num_ops);
+            Ok(GateRef::new(MulExtensionGate::<2> { num_ops }))
+        }
+
+        "BaseSumGate" => {
+            // BaseSumGate<2> is the default, num_limbs is extracted but the gate is generic over B
+            let num_limbs = get_param(&parsed.params, "num_limbs")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(63);
+            Ok(GateRef::new(BaseSumGate::<2>::new(num_limbs)))
+        }
+
+        "ReducingGate" => {
+            let num_coeffs = get_param(&parsed.params, "num_coeffs")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| ReducingGate::<2>::max_coeffs_len(config.num_wires, config.num_routed_wires));
+            Ok(GateRef::new(ReducingGate::<2>::new(num_coeffs)))
+        }
+
+        "ReducingExtensionGate" => {
+            let num_coeffs = get_param(&parsed.params, "num_coeffs")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| ReducingExtensionGate::<2>::max_coeffs_len(config.num_wires, config.num_routed_wires));
+            Ok(GateRef::new(ReducingExtensionGate::<2>::new(num_coeffs)))
+        }
+
+        "ExponentiationGate" => {
+            let num_power_bits = get_param(&parsed.params, "num_power_bits")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or_else(|| ExponentiationGate::<GoldilocksField, 2>::new_from_config(config).num_power_bits);
+            Ok(GateRef::new(ExponentiationGate::<GoldilocksField, 2>::new(num_power_bits)))
+        }
+
+        "RandomAccessGate" => {
+            let bits = get_param(&parsed.params, "bits")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4);
+            // Use new_from_config which is the public constructor
+            Ok(GateRef::new(
+                RandomAccessGate::<GoldilocksField, 2>::new_from_config(config, bits),
+            ))
+        }
+
+        "CosetInterpolationGate" => {
+            let subgroup_bits = get_param(&parsed.params, "subgroup_bits")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4);
+            let degree = get_param(&parsed.params, "degree")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(6);
+            // Use with_max_degree which computes barycentric_weights internally
+            Ok(GateRef::new(
+                CosetInterpolationGate::<GoldilocksField, 2>::with_max_degree(subgroup_bits, degree),
+            ))
+        }
+
+        _ => Err(anyhow!("Unknown gate type: {}", parsed.gate_type)),
+    }
+}
+
+/// Build CommonCircuitData from lighter JSON data.
+pub fn build_common_circuit_data(
+    lighter: &LighterCommonCircuitData,
+) -> Result<CommonCircuitData<GoldilocksField, 2>> {
+    let config = convert_circuit_config(&lighter.config);
+    let fri_params = convert_fri_params(&lighter.fri_params);
+    let selectors_info = convert_selectors_info(&lighter.selectors_info);
+
+    // Convert gates
+    let gates: Result<Vec<GateRef<GoldilocksField, 2>>> = lighter
+        .gates
+        .iter()
+        .map(|g| convert_gate_string_to_ref(g, &config))
+        .collect();
+    let gates = gates?;
+
+    // Convert k_is from u64 to GoldilocksField
+    let k_is: Vec<GoldilocksField> = lighter
+        .k_is
+        .iter()
+        .map(|&k| GoldilocksField::from_canonical_u64(k))
+        .collect();
+
+    Ok(CommonCircuitData {
+        config,
+        fri_params,
+        gates,
+        selectors_info,
+        quotient_degree_factor: lighter.quotient_degree_factor,
+        num_gate_constraints: lighter.num_gate_constraints,
+        num_constants: lighter.num_constants,
+        num_public_inputs: lighter.num_public_inputs,
+        k_is,
+        num_partial_products: lighter.num_partial_products,
+    })
+}
+
+/// Load and build CommonCircuitData from a lighter-prover circuit directory.
+pub fn load_lighter_common_circuit_data_as_okx<P: AsRef<Path>>(
+    dir: P,
+) -> Result<CommonCircuitData<GoldilocksField, 2>> {
+    let common_path = dir.as_ref().join("common_circuit_data.json");
+    let lighter = load_lighter_common_circuit_data(&common_path)?;
+    build_common_circuit_data(&lighter)
+}
+
 /// Summary of a loaded lighter circuit.
 #[derive(Clone, Debug)]
 pub struct LighterCircuitSummary {
@@ -252,7 +479,6 @@ pub struct LighterCircuitSummary {
 /// Load and summarize a lighter-prover circuit directory.
 pub fn load_lighter_circuit_summary<P: AsRef<Path>>(dir: P) -> Result<LighterCircuitSummary> {
     let common_path = dir.as_ref().join("common_circuit_data.json");
-
     let common = load_lighter_common_circuit_data(&common_path)?;
 
     let gate_types: Vec<String> = common
@@ -273,6 +499,7 @@ pub fn load_lighter_circuit_summary<P: AsRef<Path>>(dir: P) -> Result<LighterCir
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::serialization::DefaultGateSerializer;
     use std::path::PathBuf;
 
     #[test]
@@ -308,8 +535,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_gate_string_with_nested_array() {
+        // Test parsing CosetInterpolationGate with barycentric_weights array
+        let gate = parse_gate_string(
+            "CosetInterpolationGate { subgroup_bits: 4, degree: 6, barycentric_weights: [1, 2, 3] }",
+        );
+        assert_eq!(gate.gate_type, "CosetInterpolationGate");
+        assert!(gate.params.iter().any(|(k, _)| k == "subgroup_bits"));
+        assert!(gate.params.iter().any(|(k, _)| k == "degree"));
+        assert!(gate
+            .params
+            .iter()
+            .any(|(k, v)| k == "barycentric_weights" && v.contains('[')));
+    }
+
+    #[test]
     fn test_load_lighter_circuit_summary() {
-        // Try to load the testdata if available
         let testdata_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -323,7 +564,88 @@ mod tests {
             assert!(summary.num_public_inputs > 0);
             println!("Lighter circuit summary: {:?}", summary);
         } else {
-            // Skip if testdata not available
+            println!("Testdata not found at {:?}, skipping", testdata_path);
+        }
+    }
+
+    #[test]
+    fn test_build_common_circuit_data() {
+        let testdata_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("lighter-gnark-plonk-verifier/testdata/step");
+
+        if testdata_path.exists() {
+            let common = load_lighter_common_circuit_data_as_okx(&testdata_path).unwrap();
+
+            // Verify basic structure
+            assert!(common.gates.len() > 0);
+            assert!(common.num_public_inputs > 0);
+            assert!(common.k_is.len() > 0);
+
+            println!("Built CommonCircuitData with {} gates", common.gates.len());
+            println!("  num_public_inputs: {}", common.num_public_inputs);
+            println!("  degree_bits: {}", common.fri_params.degree_bits);
+        } else {
+            println!("Testdata not found at {:?}, skipping", testdata_path);
+        }
+    }
+
+    #[test]
+    fn test_common_circuit_data_serialization() {
+        let testdata_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("lighter-gnark-plonk-verifier/testdata/step");
+
+        if testdata_path.exists() {
+            let common = load_lighter_common_circuit_data_as_okx(&testdata_path).unwrap();
+
+            // Print gate IDs for verification
+            println!("Gates in loaded CommonCircuitData:");
+            for (i, gate) in common.gates.iter().enumerate() {
+                println!("  {}: {}", i, gate.0.id());
+            }
+
+            // Test serialization (to_bytes)
+            let gate_serializer = DefaultGateSerializer;
+            let bytes = common.to_bytes(&gate_serializer).unwrap();
+
+            println!("CommonCircuitData serialization test PASSED");
+            println!("  Serialized size: {} bytes", bytes.len());
+            println!("  Gates: {}", common.gates.len());
+            println!("  Public inputs: {}", common.num_public_inputs);
+            println!("  Degree bits: {}", common.fri_params.degree_bits);
+
+            // Verify all gate types are correctly mapped
+            let expected_gate_types = vec![
+                "NoopGate",
+                "PoseidonMdsGate",
+                "PublicInputGate",
+                "BaseSumGate",
+                "ReducingExtensionGate",
+                "ReducingGate",
+                "ArithmeticExtensionGate",
+                "ArithmeticGate",
+                "MulExtensionGate",
+                "ExponentiationGate",
+                "RandomAccessGate",
+                "CosetInterpolationGate",
+                "PoseidonGate",
+            ];
+
+            for (i, expected) in expected_gate_types.iter().enumerate() {
+                let gate_id = common.gates[i].0.id();
+                assert!(gate_id.starts_with(expected),
+                    "Gate {} should start with {}, got {}", i, expected, gate_id);
+            }
+
+            println!("All {} gate types correctly mapped", expected_gate_types.len());
+        } else {
             println!("Testdata not found at {:?}, skipping", testdata_path);
         }
     }
