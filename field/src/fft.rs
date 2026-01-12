@@ -2,9 +2,11 @@ use alloc::vec::Vec;
 use core::cmp::{max, min};
 
 #[cfg(feature = "cuda")]
-use cryptography_cuda::{ntt_batch, types::NTTConfig};
+use cryptography_cuda::{init_twiddle_factors_rs, ntt_batch, types::NTTConfig};
 #[cfg(feature = "cuda")]
 use plonky2_util::log2_strict as log2_strict_cuda;
+#[cfg(feature = "cuda")]
+use core::sync::atomic::{AtomicUsize, Ordering};
 use plonky2_util::{log2_strict, reverse_index_bits_in_place};
 use unroll::unroll_for_loops;
 
@@ -14,6 +16,11 @@ use crate::polynomial::{PolynomialCoeffs, PolynomialValues};
 use crate::types::Field;
 
 pub type FftRootTable<F> = Vec<Vec<F>>;
+
+/// Track the maximum lg_n for which twiddle factors have been initialized on GPU.
+/// Value 0 means not initialized. Once initialized for lg_n, all smaller sizes work too.
+#[cfg(feature = "cuda")]
+static TWIDDLE_INIT_LG_N: AtomicUsize = AtomicUsize::new(0);
 
 pub fn fft_root_table<F: Field>(n: usize) -> FftRootTable<F> {
     let lg_n = log2_strict(n);
@@ -44,6 +51,16 @@ fn fft_dispatch_gpu<F: Field>(
 ) {
     if F::CUDA_SUPPORT {
         let lg_n = log2_strict_cuda(input.len());
+
+        // Ensure twiddle factors are initialized for this size or larger.
+        // Zeknox requires init_twiddle_factors_rs before ntt_batch.
+        let current_init = TWIDDLE_INIT_LG_N.load(Ordering::Relaxed);
+        if lg_n > current_init {
+            // Initialize for this lg_n. This is idempotent for smaller sizes.
+            init_twiddle_factors_rs(0, lg_n);
+            TWIDDLE_INIT_LG_N.store(lg_n, Ordering::Relaxed);
+        }
+
         let cfg = NTTConfig::default();
         ntt_batch(0, input.as_mut_ptr(), lg_n, cfg);
         return;

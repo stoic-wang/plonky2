@@ -11,6 +11,8 @@ use crate::field::polynomial::PolynomialValues;
 use crate::field::types::Field;
 
 pub(crate) mod context_tree;
+#[cfg(feature = "std")]
+pub mod lighter_adapter;
 pub(crate) mod partial_products;
 pub mod reducing;
 pub mod serialization;
