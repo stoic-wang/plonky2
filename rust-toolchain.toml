@@ -1,5 +1,6 @@
 [toolchain]
-channel = "nightly-2024-01-16"
+# Updated from nightly-2024-01-16 to support zeknox dependency
+channel = "nightly-2025-01-01"
 components = []
 targets = []
 profile = "default"
