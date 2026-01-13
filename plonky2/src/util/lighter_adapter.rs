@@ -14,12 +14,12 @@ use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
 use crate::field::goldilocks_field::GoldilocksField;
+use crate::field::polynomial::PolynomialValues;
 use crate::field::types::Field;
 use crate::fri::oracle::PolynomialBatch;
 use crate::fri::reduction_strategies::FriReductionStrategy;
 use crate::fri::{FriConfig, FriParams};
-use crate::hash::merkle_tree::MerkleTree;
-use crate::hash::poseidon::PoseidonHash;
+use crate::util::timing::TimingTree;
 use crate::gates::arithmetic_base::ArithmeticGate;
 use crate::gates::arithmetic_extension::ArithmeticExtensionGate;
 use crate::gates::base_sum::BaseSumGate;
@@ -677,7 +677,7 @@ pub fn build_verifier_only_circuit_data(
 /// NOTE: This is a PoC/non-proving placeholder. It contains:
 /// - Empty generators (no witness generation possible)
 /// - Valid (but empty) constants_sigmas_commitment with proper MerkleTree
-/// - Empty sigmas (no permutation data)
+/// - Zero-filled sigmas (num_routed_wires vectors of length degree)
 /// - Proper subgroup from two_adic_subgroup
 /// - Empty public_inputs targets
 /// - Identity representative_map sized to num_wires * degree
@@ -693,6 +693,8 @@ pub fn build_placeholder_prover_only_circuit_data(
     let rate_bits = common.fri_params.config.rate_bits;
     let cap_height = common.fri_params.config.cap_height;
     let num_wires = common.config.num_wires;
+    let num_routed_wires = common.config.num_routed_wires;
+    let num_constants = common.num_constants;
 
     // Create proper subgroup using two_adic_subgroup
     let subgroup = GoldilocksField::two_adic_subgroup(common.fri_params.degree_bits);
@@ -705,24 +707,28 @@ pub fn build_placeholder_prover_only_circuit_data(
     // Representative map should be sized to num_wires * degree (identity mapping)
     let representative_map: Vec<usize> = (0..num_wires * degree).collect();
 
-    // Create a valid PolynomialBatch with a proper MerkleTree (non-zero leaf_size)
-    // We need at least 2^cap_height leaves for a valid tree
-    let num_leaves = 1usize << cap_height.max(1); // At least 2 leaves
-    let leaf_size = 4; // 4 field elements per leaf (standard hash size)
-    let leaves_data: Vec<GoldilocksField> = vec![GoldilocksField::ZERO; num_leaves * leaf_size];
-    let merkle_tree =
-        MerkleTree::<GoldilocksField, PoseidonHash>::new_from_1d(leaves_data, leaf_size, cap_height);
+    // Create zero-filled PolynomialValues for constants_sigmas_commitment
+    // This should contain num_constants + num_routed_wires polynomials
+    let num_polynomials = num_constants + num_routed_wires;
+    let values: Vec<PolynomialValues<GoldilocksField>> = (0..num_polynomials)
+        .map(|_| PolynomialValues::new(vec![GoldilocksField::ZERO; degree]))
+        .collect();
 
-    let constants_sigmas_commitment = PolynomialBatch {
-        polynomials: Vec::new(),
-        merkle_tree,
-        degree_log: common.fri_params.degree_bits,
+    // Build PolynomialBatch using from_values for proper structure
+    let mut timing = TimingTree::default();
+    let constants_sigmas_commitment = PolynomialBatch::<GoldilocksField, PoseidonGoldilocksConfig, 2>::from_values(
+        values,
         rate_bits,
-        blinding: false,
-    };
+        false, // blinding
+        cap_height,
+        &mut timing,
+        None, // fft_root_table
+    );
 
-    // Create empty sigmas (num_routed_wires vectors of length degree)
-    let sigmas: Vec<Vec<GoldilocksField>> = Vec::new();
+    // Create sigmas: num_routed_wires vectors of length degree, all zeros
+    let sigmas: Vec<Vec<GoldilocksField>> = (0..num_routed_wires)
+        .map(|_| vec![GoldilocksField::ZERO; degree])
+        .collect();
 
     ProverOnlyCircuitData {
         generators: Vec::new(),
@@ -1077,101 +1083,98 @@ mod tests {
             println!("  MerkleCap ({} entries) matches", restored_verifier.constants_sigmas_cap.0.len());
 
             // Test CommonCircuitData round-trip using from_bytes
-            // Note: This may fail due to format differences in how gates are serialized
-            // The adapter-generated gates use Rust's Debug format which may differ from
-            // what the native gate serializer produces during deserialization.
-            match CommonCircuitData::<GoldilocksField, 2>::from_bytes(common_bytes.clone(), &gate_serializer) {
-                Ok(restored_common) => {
-                    assert_eq!(
-                        circuit_data.common.gates.len(),
-                        restored_common.gates.len(),
-                        "Gates count mismatch"
-                    );
-                    assert_eq!(
-                        circuit_data.common.num_public_inputs,
-                        restored_common.num_public_inputs,
-                        "num_public_inputs mismatch"
-                    );
-                    assert_eq!(
-                        circuit_data.common.fri_params.degree_bits,
-                        restored_common.fri_params.degree_bits,
-                        "degree_bits mismatch"
-                    );
-                    println!("CommonCircuitData round-trip PASSED");
-                    println!("  Serialized size: {} bytes", common_bytes.len());
-                    println!("  Gates: {} (matches)", restored_common.gates.len());
-                    println!("  Public inputs: {} (matches)", restored_common.num_public_inputs);
-                }
-                Err(e) => {
-                    // Document the error but don't fail - this is a known limitation
-                    // The gate serialization format differs between adapter and native
-                    println!("CommonCircuitData from_bytes error (known limitation): {:?}", e);
-                    println!("  to_bytes succeeded: {} bytes", common_bytes.len());
-                    println!("  Note: Gate serialization format may differ from native builder");
-                }
-            }
+            // This must succeed - we've fixed the serialization asymmetry
+            let restored_common = CommonCircuitData::<GoldilocksField, 2>::from_bytes(
+                common_bytes.clone(),
+                &gate_serializer
+            ).expect("CommonCircuitData::from_bytes must succeed");
+
+            // Validate restored CommonCircuitData
+            assert_eq!(
+                circuit_data.common.gates.len(),
+                restored_common.gates.len(),
+                "Gates count mismatch"
+            );
+            assert_eq!(
+                circuit_data.common.num_public_inputs,
+                restored_common.num_public_inputs,
+                "num_public_inputs mismatch"
+            );
+            assert_eq!(
+                circuit_data.common.fri_params.degree_bits,
+                restored_common.fri_params.degree_bits,
+                "degree_bits mismatch"
+            );
+            assert_eq!(
+                circuit_data.common.num_constants,
+                restored_common.num_constants,
+                "num_constants mismatch"
+            );
+            assert_eq!(
+                circuit_data.common.config.num_routed_wires,
+                restored_common.config.num_routed_wires,
+                "num_routed_wires mismatch"
+            );
+
+            println!("CommonCircuitData round-trip PASSED");
+            println!("  Serialized size: {} bytes", common_bytes.len());
+            println!("  Gates: {} (matches)", restored_common.gates.len());
+            println!("  Public inputs: {} (matches)", restored_common.num_public_inputs);
 
             // Test full CircuitData::to_bytes/from_bytes round-trip
-            // Now that ProverOnlyCircuitData has a valid MerkleTree, to_bytes should work
+            // With fixed ProverOnlyCircuitData and serialization symmetry, this must succeed
             let circuit_bytes = circuit_data
                 .to_bytes(&gate_serializer, &generator_serializer)
-                .expect("CircuitData::to_bytes should succeed");
+                .expect("CircuitData::to_bytes must succeed");
             let circuit_bytes_len = circuit_bytes.len();
 
             println!("CircuitData to_bytes PASSED");
             println!("  Serialized size: {} bytes", circuit_bytes_len);
 
-            // Attempt from_bytes - this may fail due to gate serialization format differences
-            // between adapter-generated gates and native gates
-            match CircuitData::<GoldilocksField, PoseidonGoldilocksConfig, 2>::from_bytes(
+            // from_bytes must succeed with the serialization fixes
+            let restored_circuit = CircuitData::<GoldilocksField, PoseidonGoldilocksConfig, 2>::from_bytes(
                 &circuit_bytes,
                 &gate_serializer,
                 &generator_serializer,
-            ) {
-                Ok(restored_circuit) => {
-                    // Verify restored CircuitData matches original
-                    assert_eq!(
-                        circuit_data.common.num_public_inputs,
-                        restored_circuit.common.num_public_inputs,
-                        "CircuitData: num_public_inputs mismatch"
-                    );
-                    assert_eq!(
-                        circuit_data.verifier_only.circuit_digest,
-                        restored_circuit.verifier_only.circuit_digest,
-                        "CircuitData: circuit_digest mismatch"
-                    );
-                    assert_eq!(
-                        circuit_data.prover_only.representative_map.len(),
-                        restored_circuit.prover_only.representative_map.len(),
-                        "CircuitData: representative_map length mismatch"
-                    );
-                    assert_eq!(
-                        circuit_data.prover_only.subgroup.len(),
-                        restored_circuit.prover_only.subgroup.len(),
-                        "CircuitData: subgroup length mismatch"
-                    );
+            ).expect("CircuitData::from_bytes must succeed");
 
-                    println!("CircuitData full round-trip PASSED");
-                    println!("  num_public_inputs: {} (matches)", restored_circuit.common.num_public_inputs);
-                    println!("  circuit_digest matches");
-                    println!("  representative_map.len(): {} (matches)", restored_circuit.prover_only.representative_map.len());
-                }
-                Err(e) => {
-                    // Document the limitation - from_bytes fails due to gate serialization differences
-                    // The adapter parses gates from JSON Debug strings, but the gate serializer
-                    // uses a different format during deserialization
-                    println!("CircuitData from_bytes error (known limitation): {:?}", e);
-                    println!("  to_bytes succeeded: {} bytes", circuit_bytes_len);
-                    println!("  Note: Gate deserialization requires format compatibility");
-                    println!("  This is expected for PoC adapter - to_bytes is verified");
-                }
-            }
+            // Verify restored CircuitData matches original
+            assert_eq!(
+                circuit_data.common.num_public_inputs,
+                restored_circuit.common.num_public_inputs,
+                "CircuitData: num_public_inputs mismatch"
+            );
+            assert_eq!(
+                circuit_data.verifier_only.circuit_digest,
+                restored_circuit.verifier_only.circuit_digest,
+                "CircuitData: circuit_digest mismatch"
+            );
+            assert_eq!(
+                circuit_data.prover_only.representative_map.len(),
+                restored_circuit.prover_only.representative_map.len(),
+                "CircuitData: representative_map length mismatch"
+            );
+            assert_eq!(
+                circuit_data.prover_only.subgroup.len(),
+                restored_circuit.prover_only.subgroup.len(),
+                "CircuitData: subgroup length mismatch"
+            );
+            assert_eq!(
+                circuit_data.prover_only.sigmas.len(),
+                restored_circuit.prover_only.sigmas.len(),
+                "CircuitData: sigmas count mismatch"
+            );
+
+            println!("CircuitData full round-trip PASSED");
+            println!("  num_public_inputs: {} (matches)", restored_circuit.common.num_public_inputs);
+            println!("  circuit_digest matches");
+            println!("  representative_map.len(): {} (matches)", restored_circuit.prover_only.representative_map.len());
+            println!("  sigmas.len(): {} (matches)", restored_circuit.prover_only.sigmas.len());
 
             println!("\nCircuitData serialization test SUMMARY");
-            println!("  CommonCircuitData: to_bytes verified ({} bytes)", common_bytes.len());
-            println!("  VerifierOnlyCircuitData: full round-trip verified ({} bytes)", verifier_bytes_len);
-            println!("  CircuitData: to_bytes verified ({} bytes)", circuit_bytes_len);
-            println!("  Note: from_bytes has format limitations (see above)");
+            println!("  CommonCircuitData: full round-trip PASSED ({} bytes)", common_bytes.len());
+            println!("  VerifierOnlyCircuitData: full round-trip PASSED ({} bytes)", verifier_bytes_len);
+            println!("  CircuitData: full round-trip PASSED ({} bytes)", circuit_bytes_len);
         } else {
             println!("Testdata not found at {:?}, skipping", testdata_path);
         }

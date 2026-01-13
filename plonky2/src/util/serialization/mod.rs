@@ -1794,12 +1794,12 @@ pub trait Write {
 
         self.write_usize(*num_partial_products)?;
 
-        // self.write_usize(*num_lookup_polys)?;
-        // self.write_usize(*num_lookup_selectors)?;
-        // self.write_usize(luts.len())?;
-        // for lut in luts.iter() {
-        //     self.write_lut(lut)?;
-        // }
+        // Write placeholder lookup fields to match read_common_circuit_data expectations
+        // (num_lookup_polys, num_lookup_selectors, luts.len() are all 0 for adapter circuits)
+        self.write_usize(0)?; // num_lookup_polys
+        self.write_usize(0)?; // num_lookup_selectors
+        self.write_usize(0)?; // luts.len()
+        // Note: empty luts vector, no lut writes needed
 
         self.write_usize(gates.len())?;
         for gate in gates.iter() {
@@ -1888,17 +1888,10 @@ pub trait Write {
 
         self.write_hash::<F, <C as GenericConfig<D>>::Hasher>(*circuit_digest)?;
 
-        // self.write_usize(lookup_rows.len())?;
-        // for wire in lookup_rows.iter() {
-        //     self.write_usize(wire.last_lu_gate)?;
-        //     self.write_usize(wire.last_lut_gate)?;
-        //     self.write_usize(wire.first_lut_gate)?;
-        // }
-
-        // self.write_usize(lut_to_lookups.len())?;
-        // for tlut in lut_to_lookups.iter() {
-        //     self.write_target_lut(tlut)?;
-        // }
+        // Write placeholder lookup fields to match read_prover_only_circuit_data expectations
+        // (lookup_rows.len() and lut_to_lookups.len() are 0 for adapter circuits)
+        self.write_usize(0)?; // lookup_rows.len()
+        self.write_usize(0)?; // lut_to_lookups.len()
 
         Ok(())
     }
