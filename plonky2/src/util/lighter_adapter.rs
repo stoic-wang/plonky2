@@ -14,7 +14,7 @@ use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
 use crate::field::goldilocks_field::GoldilocksField;
-use crate::field::polynomial::PolynomialValues;
+use crate::field::polynomial::{PolynomialCoeffs, PolynomialValues};
 use crate::field::types::Field;
 use crate::fri::oracle::PolynomialBatch;
 use crate::fri::reduction_strategies::FriReductionStrategy;
@@ -707,17 +707,19 @@ pub fn build_placeholder_prover_only_circuit_data(
     // Representative map should be sized to num_wires * degree (identity mapping)
     let representative_map: Vec<usize> = (0..num_wires * degree).collect();
 
-    // Create zero-filled PolynomialValues for constants_sigmas_commitment
+    // Create zero-filled PolynomialCoeffs for constants_sigmas_commitment
     // This should contain num_constants + num_routed_wires polynomials
+    // Use PolynomialCoeffs and from_coeffs_cpu to avoid CUDA NUM_OF_GPUS dependency
     let num_polynomials = num_constants + num_routed_wires;
-    let values: Vec<PolynomialValues<GoldilocksField>> = (0..num_polynomials)
-        .map(|_| PolynomialValues::new(vec![GoldilocksField::ZERO; degree]))
+    let coeffs: Vec<PolynomialCoeffs<GoldilocksField>> = (0..num_polynomials)
+        .map(|_| PolynomialCoeffs::new(vec![GoldilocksField::ZERO; degree]))
         .collect();
 
-    // Build PolynomialBatch using from_values for proper structure
+    // Build PolynomialBatch using from_coeffs_cpu for CPU-only construction
+    // This avoids the CUDA path that requires NUM_OF_GPUS environment variable
     let mut timing = TimingTree::default();
-    let constants_sigmas_commitment = PolynomialBatch::<GoldilocksField, PoseidonGoldilocksConfig, 2>::from_values(
-        values,
+    let constants_sigmas_commitment = PolynomialBatch::<GoldilocksField, PoseidonGoldilocksConfig, 2>::from_coeffs_cpu(
+        coeffs,
         rate_bits,
         false, // blinding
         cap_height,
@@ -725,9 +727,12 @@ pub fn build_placeholder_prover_only_circuit_data(
         None, // fft_root_table
     );
 
-    // Create sigmas: num_routed_wires vectors of length degree, all zeros
-    let sigmas: Vec<Vec<GoldilocksField>> = (0..num_routed_wires)
-        .map(|_| vec![GoldilocksField::ZERO; degree])
+    // Create sigmas with CORRECT layout: [degree][num_routed_wires]
+    // The prover code accesses sigmas[subgroup_idx][wire_idx], so:
+    // - Outer dimension = degree (number of subgroup elements)
+    // - Inner dimension = num_routed_wires
+    let sigmas: Vec<Vec<GoldilocksField>> = (0..degree)
+        .map(|_| vec![GoldilocksField::ZERO; num_routed_wires])
         .collect();
 
     ProverOnlyCircuitData {
@@ -1165,11 +1170,28 @@ mod tests {
                 "CircuitData: sigmas count mismatch"
             );
 
+            // Verify sigmas layout: [degree][num_routed_wires]
+            // sigmas.len() should equal subgroup.len() (degree)
+            assert_eq!(
+                circuit_data.prover_only.sigmas.len(),
+                circuit_data.prover_only.subgroup.len(),
+                "sigmas outer dimension must equal subgroup length (degree)"
+            );
+            // sigmas[0].len() should equal num_routed_wires
+            if !circuit_data.prover_only.sigmas.is_empty() {
+                assert_eq!(
+                    circuit_data.prover_only.sigmas[0].len(),
+                    circuit_data.common.config.num_routed_wires,
+                    "sigmas inner dimension must equal num_routed_wires"
+                );
+            }
+
             println!("CircuitData full round-trip PASSED");
             println!("  num_public_inputs: {} (matches)", restored_circuit.common.num_public_inputs);
             println!("  circuit_digest matches");
             println!("  representative_map.len(): {} (matches)", restored_circuit.prover_only.representative_map.len());
-            println!("  sigmas.len(): {} (matches)", restored_circuit.prover_only.sigmas.len());
+            println!("  sigmas.len(): {} (matches subgroup.len={})", restored_circuit.prover_only.sigmas.len(), restored_circuit.prover_only.subgroup.len());
+            println!("  sigmas[0].len(): {} (matches num_routed_wires)", circuit_data.prover_only.sigmas[0].len());
 
             println!("\nCircuitData serialization test SUMMARY");
             println!("  CommonCircuitData: full round-trip PASSED ({} bytes)", common_bytes.len());
